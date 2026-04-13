@@ -1,401 +1,472 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { Upload, FileText, Image as ImageIcon, CheckCircle, ArrowRight, Loader2, Edit3, Wand2, Download, RefreshCw, Plus, Trash2, Save } from 'lucide-react';
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>逆水寒 · 交互全链路生成器</title>
+    <!-- 引入 Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- 引入 React 相关库 -->
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <!-- 引入 Lucide 图标 -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <!-- 引入 html2canvas 用于导出长图 -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;700;900&display=swap');
+        
+        body {
+            font-family: 'Noto Sans SC', sans-serif;
+            background-color: #f8fafc;
+        }
 
-const apiKey = ""; // 运行时环境自动填充
+        .custom-scrollbar::-webkit-scrollbar {
+            width: 4px;
+        }
+        .custom-scrollbar::-webkit-scrollbar-track {
+            background: transparent;
+        }
+        .custom-scrollbar::-webkit-scrollbar-thumb {
+            background: #e2e8f0;
+            border-radius: 10px;
+        }
+        .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+            background: #cbd5e1;
+        }
 
-// 动态加载 html2canvas 用于导出图片
-const loadHtml2Canvas = () => {
-  return new Promise((resolve) => {
-    if (window.html2canvas) return resolve(window.html2canvas);
-    const script = document.createElement('script');
-    script.src = 'https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js';
-    script.onload = () => resolve(window.html2canvas);
-    document.head.appendChild(script);
-  });
-};
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        .animate-fade-in {
+            animation: fadeIn 0.4s ease-out forwards;
+        }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
 
-const App = () => {
-  const [step, setStep] = useState(1);
-  const [lowFiImage, setLowFiImage] = useState(null);
-  const [imageSize, setImageSize] = useState({ width: 0, height: 0 });
-  const [isProcessing, setIsProcessing] = useState(false);
-  const [interactionDoc, setInteractionDoc] = useState({ annotations: [] });
-  const [finalHighFi, setFinalHighFi] = useState(null);
-  const [draggingIdx, setDraggingIdx] = useState(null);
-  const [isExporting, setIsExporting] = useState(false); 
-  
-  const stageRef = useRef(null);
-  const exportRef = useRef(null);
+    <script type="text/babel">
+        const { useState, useEffect, useRef } = React;
 
-  const cleanJsonString = (text) => {
-    if (!text) return "";
-    try {
-      const jsonMatch = text.match(/\{[\s\S]*\}/);
-      return jsonMatch ? jsonMatch[0] : text.trim();
-    } catch (e) {
-      return text.trim();
-    }
-  };
-
-  const handleFileUpload = (e) => {
-    const file = e.target.files[0];
-    if (file) {
-      const reader = new FileReader();
-      reader.onload = (f) => {
-        setLowFiImage(f.target.result);
-        const img = new Image();
-        img.onload = () => {
-          setImageSize({ width: img.width, height: img.height });
+        // 图标组件包装
+        const Icon = ({ name, size = 24, className = "" }) => {
+            const iconRef = useRef(null);
+            useEffect(() => {
+                if (iconRef.current) {
+                    const icon = lucide.icons[name];
+                    if (icon) {
+                        const svg = lucide.createIcons({
+                            icons: { [name]: icon },
+                            attrs: {
+                                strokeWidth: 2,
+                                width: size,
+                                height: size,
+                                class: className
+                            }
+                        });
+                    }
+                }
+            }, [name, size, className]);
+            return <i ref={iconRef} data-lucide={name} className={className}></i>;
         };
-        img.src = f.target.result;
-      };
-      reader.readAsDataURL(file);
-    }
-  };
 
-  const retryFetch = async (url, options, retries = 5, delay = 1000) => {
-    for (let i = 0; i < retries; i++) {
-      try {
-        const res = await fetch(url, options);
-        if (!res.ok) throw new Error(`HTTP 错误! 状态码: ${res.status}`);
-        return res;
-      } catch (err) {
-        if (i === retries - 1) throw err;
-        await new Promise(r => setTimeout(r, delay * Math.pow(2, i)));
-      }
-    }
-  };
+        const apiKey = ""; // 运行时环境自动填充
 
-  const generateInteractionDoc = async () => {
-    setIsProcessing(true);
-    try {
-      const base64Data = lowFiImage.split(',')[1];
-      const systemPrompt = `你是一名《逆水寒》手游的资深交互专家。
-      请分析原型图，并生成专业交互文档：
-      1. 识别主要控件并给出坐标 (x, y)。
-      2. 交互说明：详细描述点击、长按或其他反馈逻辑。
-      输出格式：{ "annotations": [{"label": "控件名", "x": 50, "y": 20, "logic": "详细说明"}] }。`;
+        const App = () => {
+            const [step, setStep] = useState(1);
+            const [lowFiImage, setLowFiImage] = useState(null);
+            const [imageSize, setImageSize] = useState({ width: 0, height: 0 });
+            const [isProcessing, setIsProcessing] = useState(false);
+            const [interactionDoc, setInteractionDoc] = useState({ annotations: [] });
+            const [finalHighFi, setFinalHighFi] = useState(null);
+            const [draggingIdx, setDraggingIdx] = useState(null);
+            const [isExporting, setIsExporting] = useState(false); 
+            
+            const stageRef = useRef(null);
+            const exportRef = useRef(null);
 
-      const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`;
-      const response = await retryFetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          contents: [{
-            parts: [
-              { text: "深度分析此原型布局。" },
-              { inlineData: { mimeType: "image/png", data: base64Data } }
-            ]
-          }],
-          systemInstruction: { parts: [{ text: systemPrompt }] },
-          generationConfig: { responseMimeType: "application/json" }
-        })
-      });
+            const cleanJsonString = (text) => {
+                if (!text) return "";
+                try {
+                    const jsonMatch = text.match(/\{[\s\S]*\}/);
+                    return jsonMatch ? jsonMatch[0] : text.trim();
+                } catch (e) {
+                    return text.trim();
+                }
+            };
 
-      const result = await response.json();
-      const rawText = result.candidates?.[0]?.content?.parts?.[0]?.text;
-      const doc = JSON.parse(cleanJsonString(rawText));
-      setInteractionDoc(doc);
-      setStep(2);
-    } catch (error) {
-      console.error(error);
-      alert("分析失败。");
-    } finally {
-      setIsProcessing(false);
-    }
-  };
+            const handleFileUpload = (e) => {
+                const file = e.target.files[0];
+                if (file) {
+                    const reader = new FileReader();
+                    reader.onload = (f) => {
+                        setLowFiImage(f.target.result);
+                        const img = new Image();
+                        img.onload = () => {
+                            setImageSize({ width: img.width, height: img.height });
+                        };
+                        img.src = f.target.result;
+                    };
+                    reader.readAsDataURL(file);
+                }
+            };
 
-  const updateAnnotation = (index, field, value) => {
-    const newAnns = [...interactionDoc.annotations];
-    newAnns[index][field] = value;
-    setInteractionDoc({ ...interactionDoc, annotations: newAnns });
-  };
+            const retryFetch = async (url, options, retries = 5, delay = 1000) => {
+                for (let i = 0; i < retries; i++) {
+                    try {
+                        const res = await fetch(url, options);
+                        if (!res.ok) throw new Error(`HTTP 错误! 状态码: ${res.status}`);
+                        return res;
+                    } catch (err) {
+                        if (i === retries - 1) throw err;
+                        await new Promise(r => setTimeout(r, delay * Math.pow(2, i)));
+                    }
+                }
+            };
 
-  const removeAnnotation = (index) => {
-    const newAnns = interactionDoc.annotations.filter((_, i) => i !== index);
-    setInteractionDoc({ ...interactionDoc, annotations: newAnns });
-  };
+            const generateInteractionDoc = async () => {
+                if (!lowFiImage) return;
+                setIsProcessing(true);
+                try {
+                    const base64Data = lowFiImage.split(',')[1];
+                    const systemPrompt = `你是一名《逆水寒》手游的资深交互专家。
+                    请分析原型图，并生成专业交互文档：
+                    1. 识别主要控件并给出坐标 (x, y)。
+                    2. 交互说明：详细描述点击、长按或其他反馈逻辑。
+                    输出格式：{ "annotations": [{"label": "控件名", "x": 50, "y": 20, "logic": "详细说明"}] }。`;
 
-  const addNewAnnotation = (e) => {
-    if (draggingIdx !== null || isExporting) return;
-    const rect = stageRef.current.getBoundingClientRect();
-    const x = ((e.clientX - rect.left) / rect.width) * 100;
-    const y = ((e.clientY - rect.top) / rect.height) * 100;
-    
-    const newAnn = {
-      label: `待命名节点 ${interactionDoc.annotations.length + 1}`,
-      x: parseFloat(x.toFixed(2)),
-      y: parseFloat(y.toFixed(2)),
-      logic: "请输入详细的交互说明及逻辑规则..."
-    };
-    
-    setInteractionDoc({
-      ...interactionDoc,
-      annotations: [...interactionDoc.annotations, newAnn]
-    });
-  };
+                    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`;
+                    const response = await retryFetch(url, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            contents: [{
+                                parts: [
+                                    { text: "深度分析此原型布局。" },
+                                    { inlineData: { mimeType: "image/png", data: base64Data } }
+                                ]
+                            }],
+                            systemInstruction: { parts: [{ text: systemPrompt }] },
+                            generationConfig: { responseMimeType: "application/json" }
+                        })
+                    });
 
-  const handleDragOver = (e) => {
-    e.preventDefault();
-    if (draggingIdx === null) return;
-    
-    const rect = stageRef.current.getBoundingClientRect();
-    let x = ((e.clientX - rect.left) / rect.width) * 100;
-    let y = ((e.clientY - rect.top) / rect.height) * 100;
-    
-    x = Math.max(0, Math.min(100, x));
-    y = Math.max(0, Math.min(100, y));
+                    const result = await response.json();
+                    const rawText = result.candidates?.[0]?.content?.parts?.[0]?.text;
+                    const doc = JSON.parse(cleanJsonString(rawText));
+                    setInteractionDoc(doc);
+                    setStep(2);
+                } catch (error) {
+                    console.error(error);
+                    alert("智能分析失败，请检查网络或图片质量。");
+                } finally {
+                    setIsProcessing(false);
+                }
+            };
 
-    const newAnns = [...interactionDoc.annotations];
-    newAnns[draggingIdx].x = parseFloat(x.toFixed(2));
-    newAnns[draggingIdx].y = parseFloat(y.toFixed(2));
-    setInteractionDoc({ ...interactionDoc, annotations: newAnns });
-  };
+            const updateAnnotation = (index, field, value) => {
+                const newAnns = [...interactionDoc.annotations];
+                newAnns[index][field] = value;
+                setInteractionDoc({ ...interactionDoc, annotations: newAnns });
+            };
 
-  const exportInteractionGuide = async () => {
-    setIsExporting(true);
-    setIsProcessing(true);
-    const html2canvas = await loadHtml2Canvas();
-    
-    // 增加延迟，确保 DOM 的长图展开渲染完成
-    setTimeout(async () => {
-      try {
-        const element = exportRef.current;
-        const canvas = await html2canvas(element, {
-          useCORS: true,
-          backgroundColor: '#f8fafc',
-          scale: 2,
-          logging: false,
-          allowTaint: true,
-          // 关键：不限制高度，捕捉全量内容
-          height: element.scrollHeight,
-          windowHeight: element.scrollHeight,
-        });
-        const link = document.createElement('a');
-        link.download = `逆水寒交互标注稿_${new Date().getTime()}.png`;
-        link.href = canvas.toDataURL('image/png');
-        link.click();
-      } catch (err) {
-        console.error(err);
-        alert("图片导出失败");
-      } finally {
-        setIsExporting(false);
-        setIsProcessing(false);
-      }
-    }, 300);
-  };
+            const removeAnnotation = (index) => {
+                const newAnns = interactionDoc.annotations.filter((_, i) => i !== index);
+                setInteractionDoc({ ...interactionDoc, annotations: newAnns });
+            };
 
-  const generateFullExperience = async () => {
-    setIsProcessing(true);
-    try {
-      const elementDescriptions = interactionDoc.annotations.map(ann => 
-        `- 控件名称: "${ann.label}", 坐标: (x:${ann.x}%, y:${ann.y}%)`
-      ).join('\n');
-      const ratio = imageSize.width / imageSize.height;
+            const addNewAnnotation = (e) => {
+                if (draggingIdx !== null || isExporting) return;
+                const rect = stageRef.current.getBoundingClientRect();
+                const x = ((e.clientX - rect.left) / rect.width) * 100;
+                const y = ((e.clientY - rect.top) / rect.height) * 100;
+                
+                const newAnn = {
+                    label: `待命名节点 ${interactionDoc.annotations.length + 1}`,
+                    x: parseFloat(x.toFixed(2)),
+                    y: parseFloat(y.toFixed(2)),
+                    logic: "请输入详细的交互说明及逻辑规则..."
+                };
+                
+                setInteractionDoc({
+                    ...interactionDoc,
+                    annotations: [...interactionDoc.annotations, newAnn]
+                });
+            };
 
-      const redrawPrompt = `逆水寒手游主视觉设计师。重绘此原型。比例: ${ratio.toFixed(2)}:1。风格：大宋美学，精致金边UI，极高细节。控件：${elementDescriptions}`;
+            const handleDragOver = (e) => {
+                e.preventDefault();
+                if (draggingIdx === null) return;
+                
+                const rect = stageRef.current.getBoundingClientRect();
+                let x = ((e.clientX - rect.left) / rect.width) * 100;
+                let y = ((e.clientY - rect.top) / rect.height) * 100;
+                
+                x = Math.max(0, Math.min(100, x));
+                y = Math.max(0, Math.min(100, y));
 
-      const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-image-preview:generateContent?key=${apiKey}`;
-      const response = await retryFetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          contents: [{ parts: [{ text: redrawPrompt }] }],
-          generationConfig: { responseModalities: ['TEXT', 'IMAGE'] }
-        })
-      });
+                const newAnns = [...interactionDoc.annotations];
+                newAnns[draggingIdx].x = parseFloat(x.toFixed(2));
+                newAnns[draggingIdx].y = parseFloat(y.toFixed(2));
+                setInteractionDoc({ ...interactionDoc, annotations: newAnns });
+            };
 
-      const result = await response.json();
-      const imagePart = result.candidates?.[0]?.content?.parts?.find(p => p.inlineData);
-      if (imagePart) {
-        setFinalHighFi(`data:image/png;base64,${imagePart.inlineData.data}`);
-        setStep(3);
-      }
-    } catch (e) { alert("视觉稿渲染失败"); } finally { setIsProcessing(false); }
-  };
+            const exportInteractionGuide = async () => {
+                setIsExporting(true);
+                setIsProcessing(true);
+                
+                setTimeout(async () => {
+                    try {
+                        const element = exportRef.current;
+                        const canvas = await window.html2canvas(element, {
+                            useCORS: true,
+                            backgroundColor: '#f8fafc',
+                            scale: 2,
+                            logging: false,
+                            height: element.scrollHeight,
+                            windowHeight: element.scrollHeight,
+                        });
+                        const link = document.createElement('a');
+                        link.download = `逆水寒交互标注稿_${new Date().getTime()}.png`;
+                        link.href = canvas.toDataURL('image/png');
+                        link.click();
+                    } catch (err) {
+                        console.error(err);
+                        alert("图片导出失败");
+                    } finally {
+                        setIsExporting(false);
+                        setIsProcessing(false);
+                    }
+                }, 400);
+            };
 
-  return (
-    <div className="min-h-screen bg-[#f8fafc] p-4 md:p-8 font-sans text-slate-900">
-      {/* 顶部标题 */}
-      <div className="max-w-7xl mx-auto flex items-center justify-between mb-8 bg-white p-6 rounded-[24px] shadow-sm border border-slate-200/50">
-        <div className="flex items-center gap-4">
-          <div className="p-3 bg-indigo-600 rounded-xl text-white shadow-lg shadow-indigo-100/50"><Wand2 size={24} /></div>
-          <div>
-            <h1 className="text-xl font-black tracking-tight">逆水寒 · 交互全链路生成器</h1>
-            <p className="text-[10px] text-slate-400 font-bold uppercase tracking-[0.2em] mt-0.5">大宋风华 · 布局与交互逻辑系统</p>
-          </div>
-        </div>
-        <div className="flex gap-4 md:gap-10">
-           {[1, 2, 3].map(i => (
-             <div key={i} className={`flex items-center gap-3 ${step >= i ? 'text-indigo-600' : 'text-slate-300'}`}>
-               <div className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-black border-2 ${step >= i ? 'border-indigo-600 bg-indigo-50' : 'border-slate-100'}`}>{i}</div>
-               <span className="hidden sm:inline text-xs font-bold">{i === 1 ? '上传原型' : i === 2 ? '交互标注' : '视觉渲染'}</span>
-             </div>
-           ))}
-        </div>
-      </div>
+            const generateFullExperience = async () => {
+                setIsProcessing(true);
+                try {
+                    const elementDescriptions = interactionDoc.annotations.map(ann => 
+                        `- 控件名称: "${ann.label}", 坐标: (x:${ann.x}%, y:${ann.y}%)`
+                    ).join('\n');
+                    const ratio = imageSize.width / imageSize.height;
 
-      {step === 1 && (
-        <div className="max-w-xl mx-auto bg-white p-12 rounded-[40px] shadow-xl border border-slate-200/60 text-center animate-in fade-in zoom-in duration-300">
-          <div className="mb-8">
-            {lowFiImage ? (
-              <div className="relative inline-block group">
-                <img src={lowFiImage} className="max-h-96 rounded-2xl shadow-xl border-4 border-white" alt="底图预览" />
-                <button onClick={() => setLowFiImage(null)} className="absolute -top-3 -right-3 bg-red-500 text-white p-2.5 rounded-full shadow-lg hover:scale-110 transition-transform"><RefreshCw size={18}/></button>
-              </div>
-            ) : (
-              <div className="w-full h-80 border-4 border-dashed border-slate-100 rounded-[32px] flex flex-col items-center justify-center bg-slate-50 hover:bg-indigo-50/50 transition-all cursor-pointer group" onClick={() => document.getElementById('fileInput').click()}>
-                <div className="w-16 h-16 bg-white rounded-2xl shadow-sm flex items-center justify-center text-indigo-500 mb-6 group-hover:scale-110 transition-transform"><ImageIcon size={32} /></div>
-                <p className="text-slate-600 font-bold text-lg">点击上传界面原型图</p>
-                <p className="text-slate-400 text-xs mt-2 font-medium">支持 PNG, JPG 等格式</p>
-              </div>
-            )}
-          </div>
-          <input id="fileInput" type="file" hidden onChange={handleFileUpload} accept="image/*" />
-          <button disabled={!lowFiImage || isProcessing} onClick={generateInteractionDoc} className="w-full py-4 bg-slate-900 text-white rounded-2xl font-black text-lg hover:bg-indigo-600 disabled:bg-slate-200 transition-all shadow-lg active:scale-95">
-            {isProcessing ? <Loader2 className="animate-spin inline mr-2" /> : "开始智能识别"}
-          </button>
-        </div>
-      )}
+                    const redrawPrompt = `逆水寒手游主视觉设计师。重绘此原型。比例: ${ratio.toFixed(2)}:1。风格：大宋美学，精致金边UI，极高细节。控件：${elementDescriptions}`;
 
-      {step === 2 && (
-        <div className="max-w-7xl mx-auto space-y-6">
-          <div className="flex justify-between items-center bg-white p-6 rounded-[24px] shadow-sm border border-slate-200/50">
-             <div>
-               <h2 className="text-lg font-black text-slate-800 flex items-center gap-2">标注编辑器</h2>
-               <p className="text-slate-400 text-[11px] font-bold uppercase mt-1 tracking-wider">点击底图新增标注，拖拽数字调整位置，右侧编辑逻辑</p>
-             </div>
-             <div className="flex gap-3">
-                <button onClick={exportInteractionGuide} className="flex items-center gap-2 px-6 py-3.5 bg-white border-2 border-slate-900 text-slate-900 rounded-xl font-bold hover:bg-slate-50 transition-all shadow-sm">
-                   <Download size={18} /> 导出标注稿
-                </button>
-                <button onClick={generateFullExperience} className="flex items-center gap-2 px-8 py-3.5 bg-indigo-600 text-white rounded-xl font-bold hover:bg-indigo-700 shadow-lg shadow-indigo-100/50 transition-all">
-                   渲染视觉效果 <ArrowRight size={18} />
-                </button>
-             </div>
-          </div>
+                    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-image-preview:generateContent?key=${apiKey}`;
+                    const response = await retryFetch(url, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            contents: [{ parts: [{ text: redrawPrompt }] }],
+                            generationConfig: { responseModalities: ['TEXT', 'IMAGE'] }
+                        })
+                    });
 
-          <div ref={exportRef} className={`grid grid-cols-1 lg:grid-cols-12 gap-8 items-start p-6 ${isExporting ? 'bg-[#f8fafc] w-[1380px]' : ''}`}>
-            {/* 左侧原型 */}
-            <div className="lg:col-span-8 bg-white p-4 rounded-[32px] shadow-sm border border-slate-200/50 relative">
-              <div 
-                ref={stageRef}
-                className="relative inline-block w-full rounded-xl overflow-hidden cursor-crosshair select-none"
-                onClick={addNewAnnotation}
-                onDragOver={handleDragOver}
-              >
-                <img src={lowFiImage} className="w-full pointer-events-none block" alt="底图" />
-                {interactionDoc.annotations.map((ann, idx) => (
-                  <div 
-                    key={idx} 
-                    draggable
-                    onDragStart={() => setDraggingIdx(idx)}
-                    onDragEnd={() => setDraggingIdx(null)}
-                    onClick={(e) => e.stopPropagation()}
-                    className="absolute w-8 h-8 bg-red-600 text-white rounded-full flex items-center justify-center font-black border-2 border-white shadow-xl cursor-move z-30"
-                    style={{ 
-                        top: `${ann.y}%`, 
-                        left: `${ann.x}%`, 
-                        transform: 'translate(-50%, -150%)', 
-                    }}
-                  >
-                    <span className="leading-none text-sm">{idx + 1}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
+                    const result = await response.json();
+                    const imagePart = result.candidates?.[0]?.content?.parts?.find(p => p.inlineData);
+                    if (imagePart) {
+                        setFinalHighFi(`data:image/png;base64,${imagePart.inlineData.data}`);
+                        setStep(3);
+                    }
+                } catch (e) { 
+                    alert("视觉稿渲染失败，请重试。"); 
+                } finally { 
+                    setIsProcessing(false); 
+                }
+            };
 
-            {/* 右侧逻辑列表 */}
-            {/* 修复点：isExporting 时移除 max-height 和 overflow 限制以撑开长图 */}
-            <div className={`lg:col-span-4 space-y-4 pr-2 custom-scrollbar ${isExporting ? 'h-auto overflow-visible' : 'max-h-[82vh] overflow-y-auto'}`}>
-              {interactionDoc.annotations.map((item, idx) => (
-                <div key={idx} className="bg-white p-5 rounded-[24px] border border-slate-200/60 shadow-sm group hover:border-indigo-300 transition-colors">
-                  <div className="flex gap-4">
-                    <span className="shrink-0 w-8 h-8 bg-slate-900 text-white rounded-lg flex items-center justify-center font-black text-sm">{idx + 1}</span>
-                    <div className="flex-1 space-y-3 overflow-hidden">
-                      <div className="flex items-center justify-between gap-2">
-                        {isExporting ? (
-                          <div className="text-sm font-black text-slate-900 py-1">{item.label}</div>
-                        ) : (
-                          <input 
-                            className="w-full text-sm font-black text-slate-800 bg-slate-50 p-2 rounded-lg focus:outline-indigo-500 border-none"
-                            value={item.label}
-                            onChange={(e) => updateAnnotation(idx, 'label', e.target.value)}
-                          />
-                        )}
-                        {!isExporting && (
-                          <button onClick={() => removeAnnotation(idx)} className="text-slate-300 hover:text-red-500 transition-colors p-1">
-                            <Trash2 size={16} />
-                          </button>
-                        )}
-                      </div>
-
-                      <div className={`p-3 rounded-xl border ${isExporting ? 'bg-slate-50 border-slate-100' : 'bg-indigo-50/40 border-indigo-100/50'}`}>
-                        <label className="text-[9px] font-black text-indigo-500/70 uppercase tracking-widest block mb-1.5">交互逻辑说明</label>
-                        {isExporting ? (
-                          <div className="text-xs text-slate-700 leading-relaxed whitespace-pre-wrap">{item.logic}</div>
-                        ) : (
-                          <textarea 
-                            rows="4"
-                            className="w-full text-xs text-slate-600 bg-transparent focus:outline-none resize-none leading-relaxed"
-                            placeholder="输入详细的点击、滑动、反馈逻辑..."
-                            value={item.logic}
-                            onChange={(e) => updateAnnotation(idx, 'logic', e.target.value)}
-                          />
-                        )}
-                      </div>
+            return (
+                <div className="min-h-screen bg-[#f8fafc] p-4 md:p-8 font-sans text-slate-900">
+                    {/* 顶部标题 */}
+                    <div className="max-w-7xl mx-auto flex flex-col md:flex-row items-center justify-between mb-8 bg-white p-6 rounded-[24px] shadow-sm border border-slate-200/50 gap-4">
+                        <div className="flex items-center gap-4">
+                            <div className="p-3 bg-indigo-600 rounded-xl text-white shadow-lg shadow-indigo-100/50">
+                                <Icon name="Wand2" size={24} />
+                            </div>
+                            <div>
+                                <h1 className="text-xl font-black tracking-tight">逆水寒 · 交互全链路生成器</h1>
+                                <p className="text-[10px] text-slate-400 font-bold uppercase tracking-[0.2em] mt-0.5">大宋风华 · 布局与交互逻辑系统</p>
+                            </div>
+                        </div>
+                        <div className="flex gap-4 md:gap-10">
+                           {[1, 2, 3].map(i => (
+                             <div key={i} className={`flex items-center gap-3 ${step >= i ? 'text-indigo-600' : 'text-slate-300'}`}>
+                               <div className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-black border-2 ${step >= i ? 'border-indigo-600 bg-indigo-50' : 'border-slate-100'}`}>{i}</div>
+                               <span className="hidden sm:inline text-xs font-bold">{i === 1 ? '上传原型' : i === 2 ? '交互标注' : '视觉渲染'}</span>
+                             </div>
+                           ))}
+                        </div>
                     </div>
-                  </div>
+
+                    {step === 1 && (
+                        <div className="max-w-xl mx-auto bg-white p-12 rounded-[40px] shadow-xl border border-slate-200/60 text-center animate-fade-in">
+                            <div className="mb-8">
+                                {lowFiImage ? (
+                                    <div className="relative inline-block group">
+                                        <img src={lowFiImage} className="max-h-96 rounded-2xl shadow-xl border-4 border-white" alt="底图预览" />
+                                        <button onClick={() => setLowFiImage(null)} className="absolute -top-3 -right-3 bg-red-500 text-white p-2.5 rounded-full shadow-lg hover:scale-110 transition-transform">
+                                            <Icon name="RefreshCw" size={18} />
+                                        </button>
+                                    </div>
+                                ) : (
+                                    <div className="w-full h-80 border-4 border-dashed border-slate-100 rounded-[32px] flex flex-col items-center justify-center bg-slate-50 hover:bg-indigo-50/50 transition-all cursor-pointer group" onClick={() => document.getElementById('fileInput').click()}>
+                                        <div className="w-16 h-16 bg-white rounded-2xl shadow-sm flex items-center justify-center text-indigo-500 mb-6 group-hover:scale-110 transition-transform">
+                                            <Icon name="ImageIcon" size={32} />
+                                        </div>
+                                        <p className="text-slate-600 font-bold text-lg">点击上传界面原型图</p>
+                                        <p className="text-slate-400 text-xs mt-2 font-medium">支持 PNG, JPG 等格式</p>
+                                    </div>
+                                )}
+                            </div>
+                            <input id="fileInput" type="file" hidden onChange={handleFileUpload} accept="image/*" />
+                            <button disabled={!lowFiImage || isProcessing} onClick={generateInteractionDoc} className="w-full py-4 bg-slate-900 text-white rounded-2xl font-black text-lg hover:bg-indigo-600 disabled:bg-slate-200 transition-all shadow-lg active:scale-95">
+                                {isProcessing ? <Icon name="Loader2" size={20} className="animate-spin inline mr-2" /> : "开始智能识别"}
+                            </button>
+                        </div>
+                    )}
+
+                    {step === 2 && (
+                        <div className="max-w-7xl mx-auto space-y-6 animate-fade-in">
+                            <div className="flex flex-col md:flex-row justify-between items-center bg-white p-6 rounded-[24px] shadow-sm border border-slate-200/50 gap-4">
+                                <div>
+                                    <h2 className="text-lg font-black text-slate-800 flex items-center gap-2">标注编辑器</h2>
+                                    <p className="text-slate-400 text-[11px] font-bold uppercase mt-1 tracking-wider">点击底图新增标注，拖拽数字调整位置，右边栏编辑逻辑</p>
+                                </div>
+                                <div className="flex gap-3">
+                                    <button onClick={exportInteractionGuide} className="flex items-center gap-2 px-6 py-3.5 bg-white border-2 border-slate-900 text-slate-900 rounded-xl font-bold hover:bg-slate-50 transition-all shadow-sm whitespace-nowrap">
+                                        <Icon name="Download" size={18} /> 导出全量长图
+                                    </button>
+                                    <button onClick={generateFullExperience} className="flex items-center gap-2 px-8 py-3.5 bg-indigo-600 text-white rounded-xl font-bold hover:bg-indigo-700 shadow-lg shadow-indigo-100/50 transition-all whitespace-nowrap">
+                                        渲染视觉稿 <Icon name="ArrowRight" size={18} />
+                                    </button>
+                                </div>
+                            </div>
+
+                            <div ref={exportRef} className={`grid grid-cols-1 ${isExporting ? 'w-[1400px] p-10 bg-[#f8fafc]' : 'lg:grid-cols-12'} gap-8 items-start`}>
+                                {/* 左侧原型展示区 */}
+                                <div className={`${isExporting ? 'w-[900px]' : 'lg:col-span-8'} bg-white p-4 rounded-[32px] shadow-sm border border-slate-200/50 relative`}>
+                                    <div 
+                                        ref={stageRef}
+                                        className="relative inline-block w-full rounded-xl overflow-hidden cursor-crosshair select-none"
+                                        onClick={addNewAnnotation}
+                                        onDragOver={handleDragOver}
+                                    >
+                                        <img src={lowFiImage} className="w-full pointer-events-none block" alt="底图" />
+                                        {interactionDoc.annotations.map((ann, idx) => (
+                                            <div 
+                                                key={idx} 
+                                                draggable
+                                                onDragStart={() => setDraggingIdx(idx)}
+                                                onDragEnd={() => setDraggingIdx(null)}
+                                                onClick={(e) => e.stopPropagation()}
+                                                className="absolute w-8 h-8 bg-red-600 text-white rounded-full flex items-center justify-center font-black border-2 border-white shadow-xl cursor-move z-30"
+                                                style={{ 
+                                                    top: `${ann.y}%`, 
+                                                    left: `${ann.x}%`, 
+                                                    transform: 'translate(-50%, -150%)', 
+                                                }}
+                                            >
+                                                <span className="leading-none text-sm">{idx + 1}</span>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+
+                                {/* 右侧逻辑列表区 */}
+                                <div className={`${isExporting ? 'w-[450px] space-y-4' : 'lg:col-span-4 space-y-4 pr-2 custom-scrollbar max-h-[82vh] overflow-y-auto'}`}>
+                                    {interactionDoc.annotations.map((item, idx) => (
+                                        <div key={idx} className="bg-white p-5 rounded-[24px] border border-slate-200/60 shadow-sm group hover:border-indigo-300 transition-colors">
+                                            <div className="flex gap-4">
+                                                <span className="shrink-0 w-8 h-8 bg-slate-900 text-white rounded-lg flex items-center justify-center font-black text-sm">{idx + 1}</span>
+                                                <div className="flex-1 space-y-3 overflow-hidden">
+                                                    <div className="flex items-center justify-between gap-2">
+                                                        {isExporting ? (
+                                                            <div className="text-sm font-black text-slate-900 py-1">{item.label}</div>
+                                                        ) : (
+                                                            <input 
+                                                                className="w-full text-sm font-black text-slate-800 bg-slate-50 p-2 rounded-lg focus:outline-indigo-500 border-none"
+                                                                value={item.label}
+                                                                onChange={(e) => updateAnnotation(idx, 'label', e.target.value)}
+                                                            />
+                                                        )}
+                                                        {!isExporting && (
+                                                            <button onClick={() => removeAnnotation(idx)} className="text-slate-300 hover:text-red-500 transition-colors p-1">
+                                                                <Icon name="Trash2" size={16} />
+                                                            </button>
+                                                        )}
+                                                    </div>
+
+                                                    <div className={`p-3 rounded-xl border ${isExporting ? 'bg-slate-50 border-slate-100' : 'bg-indigo-50/40 border-indigo-100/50'}`}>
+                                                        <label className="text-[9px] font-black text-indigo-500/70 uppercase tracking-widest block mb-1.5">交互逻辑说明</label>
+                                                        {isExporting ? (
+                                                            <div className="text-xs text-slate-700 leading-relaxed whitespace-pre-wrap">{item.logic}</div>
+                                                        ) : (
+                                                            <textarea 
+                                                                rows="4"
+                                                                className="w-full text-xs text-slate-600 bg-transparent focus:outline-none resize-none leading-relaxed"
+                                                                placeholder="输入逻辑规则..."
+                                                                value={item.logic}
+                                                                onChange={(e) => updateAnnotation(idx, 'logic', e.target.value)}
+                                                            />
+                                                        )}
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    ))}
+                                    {interactionDoc.annotations.length === 0 && (
+                                        <div className="text-center p-12 border-2 border-dashed border-slate-100 rounded-3xl text-slate-400 font-bold">
+                                            点击左侧图面添加标注点
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
+                    {step === 3 && (
+                        <div className="max-w-5xl mx-auto space-y-8 animate-fade-in">
+                            <div className="text-center">
+                                <h2 className="text-2xl font-black italic text-slate-800">大宋美学渲染稿</h2>
+                                <p className="text-slate-400 text-xs mt-1 uppercase font-bold tracking-widest">基于武侠世界观重构的 4K 视觉方案</p>
+                            </div>
+                            <div className="bg-white p-4 rounded-[40px] shadow-2xl border border-slate-200/50 text-center">
+                                <img src={finalHighFi} className="rounded-2xl w-full border border-slate-100 shadow-inner" alt="最终视觉稿" />
+                                <div className="py-8 flex justify-center">
+                                    <button onClick={() => {
+                                        const link = document.createElement('a');
+                                        link.download = "逆水寒_最终视觉稿.png";
+                                        link.href = finalHighFi;
+                                        link.click();
+                                    }} className="px-10 py-4 bg-slate-900 text-white rounded-2xl font-black flex items-center gap-3 hover:scale-105 transition-transform shadow-xl">
+                                        <Icon name="Download" size={20} /> 下载视觉渲染图片
+                                    </button>
+                                </div>
+                            </div>
+                            <div className="flex justify-center gap-4 mb-16">
+                                <button onClick={() => setStep(1)} className="px-8 py-3 bg-white border border-slate-200 text-slate-500 rounded-xl font-bold hover:bg-slate-50">返回重传</button>
+                                <button onClick={() => setStep(2)} className="px-8 py-3 bg-slate-100 text-slate-700 rounded-xl font-bold hover:bg-slate-200">修改标注</button>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* 全局加载蒙层 */}
+                    {isProcessing && (
+                        <div className="fixed inset-0 bg-white/95 backdrop-blur-xl z-[100] flex flex-col items-center justify-center animate-fade-in">
+                            <div className="w-16 h-16 border-4 border-indigo-100 border-t-indigo-600 rounded-full animate-spin" />
+                            <p className="mt-8 text-lg font-black italic tracking-[0.3em] text-slate-800 uppercase">
+                                {step === 1 ? "正在智能识别布局..." : isExporting ? "正在生成交互长图..." : "正在渲染视觉大作..."}
+                            </p>
+                            <p className="text-slate-400 text-[10px] mt-2 font-bold uppercase tracking-widest">请稍候，匠心打磨中...</p>
+                        </div>
+                    )}
                 </div>
-              ))}
-              {interactionDoc.annotations.length === 0 && (
-                <div className="text-center p-12 border-2 border-dashed border-slate-100 rounded-3xl text-slate-400 font-bold">
-                  点击左侧图面添加标注点
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
+            );
+        };
 
-      {step === 3 && (
-        <div className="max-w-5xl mx-auto space-y-8 animate-in slide-in-from-bottom duration-500">
-          <div className="text-center">
-             <h2 className="text-2xl font-black italic">视觉效果渲染预览</h2>
-             <p className="text-slate-400 text-xs mt-1 uppercase font-bold tracking-widest">基于大宋美学规范生成的 4K 视觉稿</p>
-          </div>
-          <div className="bg-white p-4 rounded-[40px] shadow-2xl border border-slate-200/50 text-center">
-             <img src={finalHighFi} className="rounded-2xl w-full border border-slate-100 shadow-inner" alt="视觉终稿" />
-             <div className="py-8 flex justify-center">
-                <button onClick={() => {
-                  const link = document.createElement('a');
-                  link.download = "逆水寒_最终视觉稿.png";
-                  link.href = finalHighFi;
-                  link.click();
-                }} className="px-10 py-4 bg-slate-900 text-white rounded-2xl font-black flex items-center gap-3 hover:scale-105 transition-transform shadow-xl">
-                   <Download size={20} /> 下载 4K 视觉稿图片
-                </button>
-             </div>
-          </div>
-          <div className="flex justify-center gap-4 mb-16">
-             <button onClick={() => setStep(1)} className="px-8 py-3 bg-white border border-slate-200 text-slate-500 rounded-xl font-bold hover:bg-slate-50">返回重新上传</button>
-             <button onClick={() => setStep(2)} className="px-8 py-3 bg-slate-100 text-slate-700 rounded-xl font-bold hover:bg-slate-200">修改交互逻辑</button>
-          </div>
-        </div>
-      )}
-
-      {/* 加载蒙层 */}
-      {isProcessing && (
-        <div className="fixed inset-0 bg-white/95 backdrop-blur-xl z-[100] flex flex-col items-center justify-center animate-in fade-in">
-           <div className="w-16 h-16 border-4 border-indigo-100 border-t-indigo-600 rounded-full animate-spin" />
-           <p className="mt-8 text-lg font-black italic tracking-[0.3em] text-slate-800 uppercase">
-             {step === 1 ? "正在深度解析原型..." : step === 2 && isExporting ? "正在封装标注稿文档..." : "正在渲染大宋风华视觉稿..."}
-           </p>
-           <p className="text-slate-400 text-[10px] mt-2 font-bold uppercase tracking-widest">请稍候，匠心打磨中...</p>
-        </div>
-      )}
-    </div>
-  );
-};
-
-export default App;
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
