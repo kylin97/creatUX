@@ -51,7 +51,7 @@
     <script type="text/babel">
         const { useState, useEffect, useRef } = React;
 
-        // 默认注入的 API KEY (用户反馈已过期，此处保留作为占位，建议用户通过 UI 更新)
+        // 默认注入的 API KEY
         const INITIAL_API_KEY = "AIzaSyDvro-c3ZXWiYssdDNnyIBwe-YzKUyhbl0";
 
         /**
@@ -116,7 +116,6 @@
                             const errorData = await res.json().catch(() => ({}));
                             const msg = errorData.error?.message || "";
                             
-                            // 针对 API KEY 过期的特殊处理
                             if (res.status === 400 && (msg.includes("expired") || msg.includes("not valid") || msg.includes("API key"))) {
                                 throw new Error("API Key 已过期或无效。请点击右上角设置图标更新有效的 Key。");
                             }
@@ -125,9 +124,7 @@
                         }
                         return res;
                     } catch (err) {
-                        // 如果是 Key 错误，不进行重试，直接抛出
                         if (err.message.includes("API Key")) throw err;
-                        
                         if (i === retries - 1) throw err;
                         await new Promise(r => setTimeout(r, delay * Math.pow(2, i)));
                     }
@@ -150,7 +147,8 @@
                     const base64Data = lowFiImage.split(',')[1];
                     const systemPrompt = `你是一名《逆水寒》手游交互专家。请识别原型图控件并输出JSON格式：{ "annotations": [{"label": "控件名", "x": 百分比, "y": 百分比, "logic": "详细交互说明"}] }。`;
 
-                    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent?key=${userApiKey}`;
+                    // 更新模型名称为预览版支持的名称
+                    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${userApiKey}`;
                     const response = await retryFetch(url, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
@@ -162,7 +160,26 @@
                                 ]
                             }],
                             systemInstruction: { parts: [{ text: systemPrompt }] },
-                            generationConfig: { responseMimeType: "application/json" }
+                            generationConfig: { 
+                                responseMimeType: "application/json",
+                                responseSchema: {
+                                    type: "OBJECT",
+                                    properties: {
+                                        annotations: {
+                                            type: "ARRAY",
+                                            items: {
+                                                type: "OBJECT",
+                                                properties: {
+                                                    label: { type: "STRING" },
+                                                    x: { type: "NUMBER" },
+                                                    y: { type: "NUMBER" },
+                                                    logic: { type: "STRING" }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
                         })
                     });
 
@@ -250,7 +267,7 @@
 
             return (
                 <div className="min-h-screen bg-[#f8fafc] p-4 md:p-8 text-slate-900">
-                    {/* 设置弹窗：用于更新 API Key */}
+                    {/* 设置弹窗 */}
                     {showSettings && (
                         <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-[400] flex items-center justify-center p-4">
                             <div className="bg-white w-full max-w-md rounded-[32px] p-8 shadow-2xl animate-fade-in text-center">
