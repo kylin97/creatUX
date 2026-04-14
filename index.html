@@ -4,45 +4,19 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>逆水寒 · 交互全链路生成器</title>
-    <!-- 引入 Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
-    <!-- 引入 React 相关库 -->
     <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-    <!-- 引入 Lucide 图标 -->
     <script src="https://unpkg.com/lucide@latest"></script>
-    <!-- 引入 html2canvas 用于导出长图 -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;700;900&display=swap');
-        
-        body {
-            font-family: 'Noto Sans SC', sans-serif;
-            background-color: #f8fafc;
-        }
-
-        .custom-scrollbar::-webkit-scrollbar {
-            width: 4px;
-        }
-        .custom-scrollbar::-webkit-scrollbar-track {
-            background: transparent;
-        }
-        .custom-scrollbar::-webkit-scrollbar-thumb {
-            background: #e2e8f0;
-            border-radius: 10px;
-        }
-        .custom-scrollbar::-webkit-scrollbar-thumb:hover {
-            background: #cbd5e1;
-        }
-
-        @keyframes fadeIn {
-            from { opacity: 0; transform: translateY(10px); }
-            to { opacity: 1; transform: translateY(0); }
-        }
-        .animate-fade-in {
-            animation: fadeIn 0.4s ease-out forwards;
-        }
+        body { font-family: 'Noto Sans SC', sans-serif; background-color: #f8fafc; }
+        .custom-scrollbar::-webkit-scrollbar { width: 4px; }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background: #e2e8f0; border-radius: 10px; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+        .animate-fade-in { animation: fadeIn 0.4s ease-out forwards; }
     </style>
 </head>
 <body>
@@ -51,82 +25,51 @@
     <script type="text/babel">
         const { useState, useEffect, useRef } = React;
 
-        // 默认注入的 API KEY
-        const INITIAL_API_KEY = "AIzaSyDvro-c3ZXWiYssdDNnyIBwe-YzKUyhbl0";
+        const INITIAL_API_KEY = ""; // 运行时环境会自动注入
 
-        /**
-         * 稳定版 Icon 组件
-         */
         const Icon = ({ name, size = 24, className = "" }) => {
             const iconRef = useRef(null);
-
             useEffect(() => {
                 if (iconRef.current && lucide.icons[name]) {
                     const temp = document.createElement('div');
-                    const i = document.createElement('i');
-                    i.setAttribute('data-lucide', name);
-                    temp.appendChild(i);
                     lucide.createIcons({
                         icons: { [name]: lucide.icons[name] },
                         nameAttr: 'data-lucide',
-                        attrs: {
-                            width: size,
-                            height: size,
-                            class: className,
-                            'stroke-width': 2
-                        },
+                        attrs: { width: size, height: size, class: className, 'stroke-width': 2 },
                         root: temp
                     });
-                    
                     const svg = temp.querySelector('svg');
-                    if (svg && iconRef.current) {
-                        iconRef.current.innerHTML = svg.outerHTML;
-                    }
+                    if (svg && iconRef.current) iconRef.current.innerHTML = svg.outerHTML;
                 }
             }, [name, size, className]);
-
             return <span ref={iconRef} className="inline-flex items-center justify-center" />;
         };
 
         const App = () => {
             const [step, setStep] = useState(1); 
-            const [userApiKey, setUserApiKey] = useState(INITIAL_API_KEY);
+            const [apiKey, setApiKey] = useState(INITIAL_API_KEY);
             const [lowFiImage, setLowFiImage] = useState(null);
             const [isProcessing, setIsProcessing] = useState(false);
             const [interactionDoc, setInteractionDoc] = useState({ annotations: [] });
             const [finalHighFi, setFinalHighFi] = useState(null);
             const [draggingIdx, setDraggingIdx] = useState(null);
-            const [isExporting, setIsExporting] = useState(false); 
+            const [isExporting, setIsExporting] = useState(false);
             const [showSettings, setShowSettings] = useState(false);
             
             const stageRef = useRef(null);
             const exportRef = useRef(null);
 
-            const cleanJsonString = (text) => {
-                if (!text) return "";
-                const jsonMatch = text.match(/\{[\s\S]*\}/);
-                return jsonMatch ? jsonMatch[0] : text.trim();
-            };
-
-            const retryFetch = async (url, options, retries = 5, delay = 1000) => {
+            // 指数退避重试机制
+            const fetchWithRetry = async (url, options, retries = 5) => {
                 for (let i = 0; i < retries; i++) {
                     try {
-                        const res = await fetch(url, options);
-                        if (!res.ok) {
-                            const errorData = await res.json().catch(() => ({}));
-                            const msg = errorData.error?.message || "";
-                            
-                            if (res.status === 400 && (msg.includes("expired") || msg.includes("not valid") || msg.includes("API key"))) {
-                                throw new Error("API Key 已过期或无效。请点击右上角设置图标更新有效的 Key。");
-                            }
-                            
-                            throw new Error(msg || `HTTP 错误! 状态码: ${res.status}`);
-                        }
-                        return res;
+                        const response = await fetch(url, options);
+                        if (response.ok) return response;
+                        const error = await response.json();
+                        if (i === retries - 1) throw new Error(error.error?.message || "请求失败");
                     } catch (err) {
-                        if (err.message.includes("API Key")) throw err;
                         if (i === retries - 1) throw err;
-                        await new Promise(r => setTimeout(r, delay * Math.pow(2, i)));
+                        await new Promise(res => setTimeout(res, Math.pow(2, i) * 1000));
                     }
                 }
             };
@@ -145,257 +88,214 @@
                 setIsProcessing(true);
                 try {
                     const base64Data = lowFiImage.split(',')[1];
-                    const systemPrompt = `你是一名《逆水寒》手游交互专家。请识别原型图控件并输出JSON格式：{ "annotations": [{"label": "控件名", "x": 百分比, "y": 百分比, "logic": "详细交互说明"}] }。`;
+                    // 修正模型路径为预览环境支持的路径
+                    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`;
+                    
+                    const systemPrompt = "你是一名《逆水寒》手游交互专家。请识别原型图控件并以JSON格式输出坐标和交互逻辑。";
+                    const userQuery = "请分析此原型图，识别主要UI控件。";
 
-                    // 更新模型名称为预览版支持的名称
-                    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${userApiKey}`;
-                    const response = await retryFetch(url, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({
-                            contents: [{
-                                parts: [
-                                    { text: "分析此原型布局并生成交互文档。" },
-                                    { inlineData: { mimeType: "image/png", data: base64Data } }
-                                ]
-                            }],
-                            systemInstruction: { parts: [{ text: systemPrompt }] },
-                            generationConfig: { 
-                                responseMimeType: "application/json",
-                                responseSchema: {
-                                    type: "OBJECT",
-                                    properties: {
-                                        annotations: {
-                                            type: "ARRAY",
-                                            items: {
-                                                type: "OBJECT",
-                                                properties: {
-                                                    label: { type: "STRING" },
-                                                    x: { type: "NUMBER" },
-                                                    y: { type: "NUMBER" },
-                                                    logic: { type: "STRING" }
-                                                }
-                                            }
+                    const payload = {
+                        contents: [{
+                            parts: [
+                                { text: userQuery },
+                                { inlineData: { mimeType: "image/png", data: base64Data } }
+                            ]
+                        }],
+                        systemInstruction: { parts: [{ text: systemPrompt }] },
+                        generationConfig: {
+                            responseMimeType: "application/json",
+                            responseSchema: {
+                                type: "OBJECT",
+                                properties: {
+                                    annotations: {
+                                        type: "ARRAY",
+                                        items: {
+                                            type: "OBJECT",
+                                            properties: {
+                                                label: { type: "STRING" },
+                                                x: { type: "NUMBER" },
+                                                y: { type: "NUMBER" },
+                                                logic: { type: "STRING" }
+                                            },
+                                            required: ["label", "x", "y", "logic"]
                                         }
                                     }
                                 }
                             }
-                        })
+                        }
+                    };
+
+                    const response = await fetchWithRetry(url, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(payload)
                     });
 
-                    const result = await response.json();
-                    const rawText = result.candidates?.[0]?.content?.parts?.[0]?.text;
-                    const doc = JSON.parse(cleanJsonString(rawText));
-                    setInteractionDoc(doc);
+                    const data = await response.json();
+                    const textContent = data.candidates?.[0]?.content?.parts?.[0]?.text;
+                    const parsedData = JSON.parse(textContent);
+                    setInteractionDoc(parsedData);
                     setStep(2);
                 } catch (error) {
-                    console.error(error);
-                    alert("错误: " + error.message);
-                    if (error.message.includes("API Key")) setShowSettings(true);
+                    alert("识别失败: " + error.message);
                 } finally {
                     setIsProcessing(false);
                 }
             };
 
-            const generateFullExperience = async () => {
+            const generateVisualUI = async () => {
                 setIsProcessing(true);
                 try {
-                    const descriptions = interactionDoc.annotations.map(ann => `- ${ann.label}`).join(', ');
-                    const redrawPrompt = `大宋武侠风格界面重绘。逆水寒手游UI风格。包含控件：${descriptions}。精致、唯美、高清。`;
-
-                    const url = `https://generativelanguage.googleapis.com/v1beta/models/imagen-4.0-generate-001:predict?key=${userApiKey}`;
+                    const descriptions = interactionDoc.annotations.map(a => a.label).join(', ');
+                    const prompt = `《逆水寒》手游风格高清UI重绘。包含以下元素：${descriptions}。唯美武侠风格，细腻纹理，大宋美学。`;
                     
-                    const response = await retryFetch(url, {
+                    const url = `https://generativelanguage.googleapis.com/v1beta/models/imagen-4.0-generate-001:predict?key=${apiKey}`;
+                    
+                    const response = await fetchWithRetry(url, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({
-                            instances: [{ prompt: redrawPrompt }],
+                            instances: { prompt: prompt },
                             parameters: { sampleCount: 1 }
                         })
                     });
 
-                    const result = await response.json();
-                    if (result.predictions?.[0]?.bytesBase64Encoded) {
-                        setFinalHighFi(`data:image/png;base64,${result.predictions[0].bytesBase64Encoded}`);
+                    const data = await response.json();
+                    if (data.predictions?.[0]?.bytesBase64Encoded) {
+                        setFinalHighFi(`data:image/png;base64,${data.predictions[0].bytesBase64Encoded}`);
                         setStep(3);
                     } else {
-                        throw new Error("生成结果为空，请检查 Prompt 或 API 限制。");
+                        throw new Error("图像生成未返回有效数据");
                     }
-                } catch (e) { 
-                    console.error(e);
-                    alert("视觉渲染失败: " + e.message); 
-                    if (e.message.includes("API Key")) setShowSettings(true);
-                } finally { 
-                    setIsProcessing(false); 
+                } catch (error) {
+                    alert("视觉生成失败: " + error.message);
+                } finally {
+                    setIsProcessing(false);
                 }
             };
 
-            const addNewAnnotation = (e) => {
-                if (draggingIdx !== null || isExporting) return;
-                const rect = stageRef.current.getBoundingClientRect();
-                const x = ((e.clientX - rect.left) / rect.width) * 100;
-                const y = ((e.clientY - rect.top) / rect.height) * 100;
-                setInteractionDoc({
-                    ...interactionDoc,
-                    annotations: [...interactionDoc.annotations, {
-                        label: `新控件 ${interactionDoc.annotations.length + 1}`,
-                        x: parseFloat(x.toFixed(2)),
-                        y: parseFloat(y.toFixed(2)),
-                        logic: "点击反馈逻辑说明..."
-                    }]
-                });
-            };
-
-            const exportInteractionGuide = async () => {
+            const exportGuide = async () => {
                 setIsExporting(true);
-                setIsProcessing(true);
                 setTimeout(async () => {
-                    try {
-                        const canvas = await window.html2canvas(exportRef.current, { scale: 2, backgroundColor: '#f8fafc' });
-                        const link = document.createElement('a');
-                        link.download = `逆水寒交互标注_${Date.now()}.png`;
-                        link.href = canvas.toDataURL('image/png');
-                        link.click();
-                    } catch (err) {
-                        alert("导出失败");
-                    } finally {
-                        setIsExporting(false);
-                        setIsProcessing(false);
-                    }
-                }, 500);
+                    const canvas = await html2canvas(exportRef.current, { scale: 2 });
+                    const link = document.createElement('a');
+                    link.download = "逆水寒交互标注稿.png";
+                    link.href = canvas.toDataURL();
+                    link.click();
+                    setIsExporting(false);
+                }, 100);
             };
 
             return (
-                <div className="min-h-screen bg-[#f8fafc] p-4 md:p-8 text-slate-900">
-                    {/* 设置弹窗 */}
-                    {showSettings && (
-                        <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-[400] flex items-center justify-center p-4">
-                            <div className="bg-white w-full max-w-md rounded-[32px] p-8 shadow-2xl animate-fade-in text-center">
-                                <div className="w-16 h-16 bg-red-50 text-red-600 rounded-2xl flex items-center justify-center mx-auto mb-4">
-                                    <Icon name="Key" size={32} />
-                                </div>
-                                <h2 className="text-xl font-black italic">更新 API Key</h2>
-                                <p className="text-slate-400 text-xs mt-2 font-bold uppercase tracking-widest mb-6">当前 Key 已失效，请输入新的 Key</p>
-                                <div className="space-y-4 text-left">
-                                    <input 
-                                        type="text" 
-                                        placeholder="AIzaSy..."
-                                        className="w-full bg-slate-50 border-2 border-slate-100 rounded-xl px-4 py-3 text-sm focus:border-indigo-500 transition-colors outline-none font-mono"
-                                        value={userApiKey}
-                                        onChange={(e) => setUserApiKey(e.target.value)}
-                                    />
-                                    <button 
-                                        onClick={() => setShowSettings(false)}
-                                        className="w-full py-4 bg-indigo-600 text-white rounded-xl font-black text-lg hover:bg-indigo-700 transition-all shadow-lg"
-                                    >
-                                        保存并继续
-                                    </button>
-                                </div>
-                            </div>
-                        </div>
-                    )}
-
-                    <div className="max-w-7xl mx-auto flex items-center justify-between mb-8 bg-white p-6 rounded-[24px] shadow-sm border border-slate-200/50">
+                <div className="min-h-screen p-4 md:p-8">
+                    {/* Header */}
+                    <div className="max-w-7xl mx-auto flex items-center justify-between mb-8 bg-white p-6 rounded-3xl shadow-sm border border-slate-100">
                         <div className="flex items-center gap-4">
                             <div className="p-3 bg-indigo-600 rounded-xl text-white">
-                                <Icon name="Wand2" size={24} />
+                                <Icon name="Zap" size={24} />
                             </div>
                             <div>
                                 <h1 className="text-xl font-black italic">逆水寒 · 交互全链路</h1>
-                                <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">AI Interaction System</p>
+                                <p className="text-[10px] text-slate-400 font-bold tracking-widest uppercase">AI-Driven Design System</p>
                             </div>
                         </div>
-                        <div className="flex gap-4">
-                           {[1, 2, 3].map(i => (
-                             <div key={i} className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold border ${step >= i ? 'bg-indigo-600 border-indigo-600 text-white' : 'border-slate-100 text-slate-300'}`}>{i}</div>
-                           ))}
-                           <button onClick={() => setShowSettings(true)} className="text-slate-300 hover:text-indigo-600 ml-4 p-2 rounded-lg hover:bg-slate-50">
-                               <Icon name="Settings" size={20} />
-                           </button>
+                        <div className="flex gap-2">
+                            {[1, 2, 3].map(i => (
+                                <div key={i} className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold border ${step >= i ? 'bg-indigo-600 border-indigo-600 text-white' : 'border-slate-200 text-slate-300'}`}>{i}</div>
+                            ))}
                         </div>
                     </div>
 
+                    {/* Step 1: Upload */}
                     {step === 1 && (
                         <div className="max-w-xl mx-auto bg-white p-12 rounded-[40px] shadow-xl border border-slate-100 text-center animate-fade-in">
-                            <div className="mb-8">
+                            <div className="mb-8 cursor-pointer" onClick={() => document.getElementById('upload').click()}>
                                 {lowFiImage ? (
-                                    <div className="relative inline-block">
-                                        <img src={lowFiImage} className="max-h-96 rounded-2xl shadow-lg" alt="预览" />
-                                        <button onClick={() => setLowFiImage(null)} className="absolute -top-3 -right-3 bg-red-500 text-white p-2.5 rounded-full shadow-lg">
-                                            <Icon name="X" size={16} />
-                                        </button>
-                                    </div>
+                                    <img src={lowFiImage} className="max-h-80 mx-auto rounded-2xl" />
                                 ) : (
-                                    <div className="w-full h-80 border-4 border-dashed border-slate-50 rounded-[32px] flex flex-col items-center justify-center bg-slate-50 cursor-pointer hover:bg-indigo-50/50 transition-all" onClick={() => document.getElementById('fileInput').click()}>
-                                        <Icon name="ImageIcon" size={48} className="text-slate-200 mb-4" />
-                                        <p className="text-slate-500 font-bold">上传原型图开启 AI 分析</p>
+                                    <div className="w-full h-64 border-4 border-dashed border-slate-50 rounded-3xl flex flex-col items-center justify-center bg-slate-50 hover:bg-indigo-50 transition-colors">
+                                        <Icon name="UploadCloud" size={48} className="text-slate-200 mb-4" />
+                                        <p className="text-slate-400 font-bold">上传原型截图</p>
                                     </div>
                                 )}
                             </div>
-                            <input id="fileInput" type="file" hidden onChange={handleFileUpload} accept="image/*" />
-                            <button disabled={!lowFiImage || isProcessing} onClick={generateInteractionDoc} className="w-full py-4 bg-slate-900 text-white rounded-2xl font-black text-lg hover:bg-indigo-600 disabled:bg-slate-200 transition-all">
-                                {isProcessing ? "智能解构中..." : "开始智能识别"}
+                            <input id="upload" type="file" hidden accept="image/*" onChange={handleFileUpload} />
+                            <button 
+                                disabled={!lowFiImage || isProcessing}
+                                onClick={generateInteractionDoc}
+                                className="w-full py-4 bg-slate-900 text-white rounded-2xl font-black text-lg hover:bg-indigo-600 disabled:opacity-30 transition-all shadow-lg"
+                            >
+                                {isProcessing ? "AI 深度分析中..." : "开启智能交互识别"}
                             </button>
                         </div>
                     )}
 
+                    {/* Step 2: Editor */}
                     {step === 2 && (
-                        <div className="max-w-7xl mx-auto space-y-6 animate-fade-in">
-                            <div className="flex justify-between items-center bg-white p-6 rounded-[24px] border border-slate-200/50 shadow-sm">
+                        <div className="max-w-7xl mx-auto animate-fade-in space-y-6">
+                            <div className="flex justify-between items-center bg-white p-6 rounded-3xl border border-slate-100">
                                 <div>
-                                    <h2 className="font-black text-slate-800">标注编辑器</h2>
-                                    <p className="text-slate-400 text-[10px] font-bold uppercase mt-1 tracking-widest">点击图片增加锚点 · 拖拽锚点调整位置</p>
+                                    <h2 className="font-black">标注编辑器</h2>
+                                    <p className="text-slate-400 text-[10px] font-bold tracking-widest uppercase">拖拽数字调整位置</p>
                                 </div>
                                 <div className="flex gap-3">
-                                    <button onClick={exportInteractionGuide} className="px-6 py-3 border-2 border-slate-900 rounded-xl font-bold text-sm hover:bg-slate-50">导出长图</button>
-                                    <button onClick={generateFullExperience} className="px-6 py-3 bg-indigo-600 text-white rounded-xl font-bold text-sm hover:bg-indigo-700 shadow-lg">视觉渲染</button>
+                                    <button onClick={exportGuide} className="px-6 py-3 border-2 border-slate-900 rounded-xl font-bold text-sm">导出长图</button>
+                                    <button onClick={generateVisualUI} className="px-6 py-3 bg-indigo-600 text-white rounded-xl font-bold text-sm shadow-lg">视觉渲染</button>
                                 </div>
                             </div>
 
-                            <div ref={exportRef} className={`grid grid-cols-1 ${isExporting ? 'w-[1200px] p-10 bg-[#f8fafc]' : 'lg:grid-cols-12'} gap-8`}>
-                                <div className={`${isExporting ? 'w-[800px]' : 'lg:col-span-8'} bg-white p-4 rounded-[32px] shadow-sm relative`}>
-                                    <div ref={stageRef} className="relative inline-block w-full rounded-2xl overflow-hidden cursor-crosshair select-none ring-1 ring-slate-100" onClick={addNewAnnotation} onDragOver={(e) => e.preventDefault()}>
-                                        <img src={lowFiImage} className="w-full pointer-events-none block" />
+                            <div ref={exportRef} className={`grid ${isExporting ? 'grid-cols-1 w-[1200px] p-8' : 'lg:grid-cols-12'} gap-8`}>
+                                <div className={`${isExporting ? 'w-full' : 'lg:col-span-8'} bg-white p-4 rounded-[32px] shadow-sm relative`}>
+                                    <div ref={stageRef} className="relative w-full rounded-2xl overflow-hidden ring-1 ring-slate-100">
+                                        <img src={lowFiImage} className="w-full block select-none pointer-events-none" />
                                         {interactionDoc.annotations.map((ann, idx) => (
                                             <div 
-                                                key={idx} draggable 
-                                                onDragStart={() => setDraggingIdx(idx)} 
+                                                key={idx}
+                                                draggable
+                                                onDragStart={() => setDraggingIdx(idx)}
                                                 onDragEnd={(e) => {
                                                     const rect = stageRef.current.getBoundingClientRect();
-                                                    let x = ((e.clientX - rect.left) / rect.width) * 100;
-                                                    let y = ((e.clientY - rect.top) / rect.height) * 100;
+                                                    const x = ((e.clientX - rect.left) / rect.width) * 100;
+                                                    const y = ((e.clientY - rect.top) / rect.height) * 100;
                                                     const newAnns = [...interactionDoc.annotations];
-                                                    newAnns[idx].x = Math.max(0, Math.min(100, parseFloat(x.toFixed(2))));
-                                                    newAnns[idx].y = Math.max(0, Math.min(100, parseFloat(y.toFixed(2))));
+                                                    newAnns[idx].x = Math.max(0, Math.min(100, x));
+                                                    newAnns[idx].y = Math.max(0, Math.min(100, y));
                                                     setInteractionDoc({ ...interactionDoc, annotations: newAnns });
-                                                    setDraggingIdx(null);
                                                 }}
-                                                onClick={(e) => e.stopPropagation()}
-                                                className="absolute w-8 h-8 bg-red-600 text-white rounded-full flex items-center justify-center font-black border-2 border-white shadow-xl cursor-move z-30"
-                                                style={{ top: `${ann.y}%`, left: `${ann.x}%`, transform: 'translate(-50%, -50%)' }}
+                                                className="absolute w-8 h-8 bg-red-600 text-white rounded-full flex items-center justify-center font-black text-xs border-2 border-white shadow-xl cursor-move transform -translate-x-1/2 -translate-y-1/2"
+                                                style={{ left: `${ann.x}%`, top: `${ann.y}%` }}
                                             >
-                                                <span className="text-xs">{idx + 1}</span>
+                                                {idx + 1}
                                             </div>
                                         ))}
                                     </div>
                                 </div>
 
-                                <div className={`${isExporting ? 'w-[360px] space-y-4' : 'lg:col-span-4 space-y-4 overflow-y-auto max-h-[80vh] custom-scrollbar'}`}>
-                                    {interactionDoc.annotations.map((item, idx) => (
-                                        <div key={idx} className="bg-white p-5 rounded-[24px] border border-slate-200 shadow-sm group hover:border-indigo-300">
+                                <div className={`${isExporting ? 'w-full grid grid-cols-2 gap-4' : 'lg:col-span-4 space-y-4 max-h-[80vh] overflow-y-auto custom-scrollbar'}`}>
+                                    {interactionDoc.annotations.map((ann, idx) => (
+                                        <div key={idx} className="bg-white p-5 rounded-2xl border border-slate-100 shadow-sm">
                                             <div className="flex gap-4">
-                                                <div className="shrink-0 w-8 h-8 bg-slate-900 text-white rounded-lg flex items-center justify-center font-black text-sm">{idx + 1}</div>
-                                                <div className="flex-1 space-y-3">
-                                                    <input className="w-full text-sm font-black text-slate-800 bg-slate-50 p-2 rounded-lg outline-none" value={item.label} onChange={(e) => {
-                                                        const newAnns = [...interactionDoc.annotations];
-                                                        newAnns[idx].label = e.target.value;
-                                                        setInteractionDoc({ ...interactionDoc, annotations: newAnns });
-                                                    }} />
-                                                    <textarea rows="3" className="w-full text-xs text-slate-500 bg-transparent border-none focus:ring-0 p-0 resize-none leading-relaxed outline-none" value={item.logic} onChange={(e) => {
-                                                        const newAnns = [...interactionDoc.annotations];
-                                                        newAnns[idx].logic = e.target.value;
-                                                        setInteractionDoc({ ...interactionDoc, annotations: newAnns });
-                                                    }} />
+                                                <div className="w-8 h-8 bg-slate-900 text-white rounded-lg flex items-center justify-center shrink-0 font-bold">{idx + 1}</div>
+                                                <div className="flex-1">
+                                                    <input 
+                                                        className="w-full font-black text-sm mb-2 outline-none border-b border-transparent focus:border-indigo-200"
+                                                        value={ann.label}
+                                                        onChange={(e) => {
+                                                            const n = [...interactionDoc.annotations];
+                                                            n[idx].label = e.target.value;
+                                                            setInteractionDoc({ ...interactionDoc, annotations: n });
+                                                        }}
+                                                    />
+                                                    <textarea 
+                                                        className="w-full text-xs text-slate-500 outline-none resize-none bg-slate-50 p-2 rounded-lg"
+                                                        rows="3"
+                                                        value={ann.logic}
+                                                        onChange={(e) => {
+                                                            const n = [...interactionDoc.annotations];
+                                                            n[idx].logic = e.target.value;
+                                                            setInteractionDoc({ ...interactionDoc, annotations: n });
+                                                        }}
+                                                    />
                                                 </div>
                                             </div>
                                         </div>
@@ -405,30 +305,35 @@
                         </div>
                     )}
 
+                    {/* Step 3: Result */}
                     {step === 3 && (
-                        <div className="max-w-5xl mx-auto space-y-6 animate-fade-in text-center">
-                            <h2 className="text-2xl font-black italic">大宋风华 · 视觉预览</h2>
+                        <div className="max-w-4xl mx-auto animate-fade-in text-center space-y-8">
+                            <h2 className="text-2xl font-black italic">视觉风格重绘完成</h2>
                             <div className="bg-white p-4 rounded-[40px] shadow-2xl border border-slate-100">
-                                <img src={finalHighFi} className="rounded-2xl w-full" alt="视觉稿" />
+                                <img src={finalHighFi} className="rounded-3xl w-full shadow-inner" alt="Result" />
                                 <div className="py-8 flex justify-center gap-4">
                                     <button onClick={() => setStep(2)} className="px-8 py-3 bg-slate-100 rounded-xl font-bold">返回编辑</button>
-                                    <button onClick={() => {
-                                        const link = document.createElement('a');
-                                        link.download = "渲染稿.png";
-                                        link.href = finalHighFi;
-                                        link.click();
-                                    }} className="px-8 py-3 bg-indigo-600 text-white rounded-xl font-bold flex items-center gap-2">
-                                        <Icon name="Download" size={16} /> 保存渲染图
+                                    <button 
+                                        onClick={() => {
+                                            const a = document.createElement('a');
+                                            a.href = finalHighFi;
+                                            a.download = "逆水寒视觉稿.png";
+                                            a.click();
+                                        }}
+                                        className="px-8 py-3 bg-indigo-600 text-white rounded-xl font-bold flex items-center gap-2 shadow-lg"
+                                    >
+                                        <Icon name="Download" size={18} /> 下载图片
                                     </button>
                                 </div>
                             </div>
                         </div>
                     )}
 
+                    {/* Loading Overlay */}
                     {isProcessing && (
-                        <div className="fixed inset-0 bg-white/90 backdrop-blur-sm z-[300] flex flex-col items-center justify-center">
-                            <div className="w-12 h-12 border-4 border-indigo-100 border-t-indigo-600 rounded-full animate-spin mb-4" />
-                            <p className="font-black text-slate-800 tracking-widest text-sm uppercase">AI 正在匠心打磨方案...</p>
+                        <div className="fixed inset-0 bg-white/80 backdrop-blur-md z-[500] flex flex-col items-center justify-center">
+                            <div className="w-16 h-16 border-4 border-indigo-100 border-t-indigo-600 rounded-full animate-spin mb-6" />
+                            <p className="font-black text-slate-800 tracking-[0.2em] uppercase text-sm animate-pulse">正在链接大宋枢密院 AI...</p>
                         </div>
                     )}
                 </div>
