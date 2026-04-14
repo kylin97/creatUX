@@ -73,7 +73,8 @@
             return <i ref={iconRef} data-lucide={name} className={className}></i>;
         };
 
-        const apiKey = ""; // 运行时环境自动填充
+        // 重要提示：请在此处填入你的 Gemini API Key 才能使用 AI 识别功能
+        const apiKey = "AIzaSyD-7-9qvxBcpnVFWqcj4dZeIp1I9C-mPZY"; 
 
         const App = () => {
             const [step, setStep] = useState(1);
@@ -129,6 +130,15 @@
 
             const generateInteractionDoc = async () => {
                 if (!lowFiImage) return;
+                
+                // 如果没有 API KEY，直接跳到步骤2（手动标注模式）
+                if (!apiKey || apiKey === "") {
+                    console.warn("未检测到 API Key，已切换至手动标注模式。");
+                    setInteractionDoc({ annotations: [] });
+                    setStep(2);
+                    return;
+                }
+
                 setIsProcessing(true);
                 try {
                     const base64Data = lowFiImage.split(',')[1];
@@ -155,13 +165,18 @@
                     });
 
                     const result = await response.json();
+                    if (result.error) throw new Error(result.error.message);
+                    
                     const rawText = result.candidates?.[0]?.content?.parts?.[0]?.text;
                     const doc = JSON.parse(cleanJsonString(rawText));
                     setInteractionDoc(doc);
                     setStep(2);
                 } catch (error) {
                     console.error(error);
-                    alert("智能分析失败，请检查网络或图片质量。");
+                    if (confirm("AI 分析识别失败（可能是由于缺少 API Key 或网络波动）。\n\n点击“确定”进入手动标注模式，点击“取消”重试。")) {
+                        setInteractionDoc({ annotations: [] });
+                        setStep(2);
+                    }
                 } finally {
                     setIsProcessing(false);
                 }
@@ -244,6 +259,10 @@
             };
 
             const generateFullExperience = async () => {
+                if (!apiKey) {
+                    alert("请在代码中填入 API Key 才能使用视觉重绘功能。");
+                    return;
+                }
                 setIsProcessing(true);
                 try {
                     const elementDescriptions = interactionDoc.annotations.map(ann => 
@@ -270,7 +289,7 @@
                         setStep(3);
                     }
                 } catch (e) { 
-                    alert("视觉稿渲染失败，请重试。"); 
+                    alert("视觉稿渲染失败，请检查 API Key。"); 
                 } finally { 
                     setIsProcessing(false); 
                 }
@@ -321,8 +340,13 @@
                             </div>
                             <input id="fileInput" type="file" hidden onChange={handleFileUpload} accept="image/*" />
                             <button disabled={!lowFiImage || isProcessing} onClick={generateInteractionDoc} className="w-full py-4 bg-slate-900 text-white rounded-2xl font-black text-lg hover:bg-indigo-600 disabled:bg-slate-200 transition-all shadow-lg active:scale-95">
-                                {isProcessing ? <Icon name="Loader2" size={20} className="animate-spin inline mr-2" /> : "开始智能识别"}
+                                {isProcessing ? <Icon name="Loader2" size={20} className="animate-spin inline mr-2" /> : (!apiKey ? "开始手动标注 (无Key)" : "开始智能识别")}
                             </button>
+                            {!apiKey && (
+                                <p className="mt-4 text-[10px] text-red-400 font-bold uppercase tracking-widest">
+                                    注意：未配置 API Key，将无法自动识别按钮位置
+                                </p>
+                            )}
                         </div>
                     )}
 
