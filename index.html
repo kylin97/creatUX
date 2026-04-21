@@ -3,20 +3,62 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>逆水寒 · 交互全链路生成器</title>
+    <title>交互全链路生成器</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-    <script src="https://unpkg.com/lucide@latest"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
     <style>
-        @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;700;900&display=swap');
-        body { font-family: 'Noto Sans SC', sans-serif; background-color: #f8fafc; }
-        .custom-scrollbar::-webkit-scrollbar { width: 4px; }
-        .custom-scrollbar::-webkit-scrollbar-thumb { background: #e2e8f0; border-radius: 10px; }
-        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
-        .animate-fade-in { animation: fadeIn 0.4s ease-out forwards; }
+        @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;700;900&display=swap');
+        
+        :root { --primary: #ef4444; }
+
+        body { 
+            font-family: 'Noto Sans SC', sans-serif; 
+            background-color: #f1f5f9; 
+            margin: 0;
+            overflow: hidden;
+        }
+
+        .annotation-point { 
+            position: absolute !important;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            width: 30px; 
+            height: 30px; 
+            background: var(--primary);
+            color: white;
+            border-radius: 50%;
+            border: 2px solid #fff;
+            box-shadow: 0 4px 10px rgba(239, 68, 68, 0.4);
+            font-size: 14px; 
+            font-weight: 900;
+            z-index: 100; 
+            transform: translate(-50%, -50%);
+            cursor: grab;
+            user-select: none;
+            transition: transform 0.1s ease-out, box-shadow 0.2s;
+        }
+
+        .annotation-point:hover { transform: translate(-50%, -50%) scale(1.1); box-shadow: 0 6px 15px rgba(239, 68, 68, 0.6); }
+        .annotation-point:active { cursor: grabbing; transform: translate(-50%, -50%) scale(1.2); }
+
+        .crop-overlay { 
+            position: absolute; 
+            top: 0; left: 0; right: 0; bottom: 0;
+            cursor: crosshair; 
+            z-index: 150; 
+            background: rgba(15, 23, 42, 0.6); 
+        }
+
+        .custom-scrollbar::-webkit-scrollbar { width: 5px; }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 10px; }
+        
+        .glass-panel {
+            background: rgba(255, 255, 255, 0.8);
+            backdrop-filter: blur(10px);
+        }
     </style>
 </head>
 <body>
@@ -25,317 +67,335 @@
     <script type="text/babel">
         const { useState, useEffect, useRef } = React;
 
-        const INITIAL_API_KEY = ""; // 运行时环境会自动注入
-
-        const Icon = ({ name, size = 24, className = "" }) => {
-            const iconRef = useRef(null);
-            useEffect(() => {
-                if (iconRef.current && lucide.icons[name]) {
-                    const temp = document.createElement('div');
-                    lucide.createIcons({
-                        icons: { [name]: lucide.icons[name] },
-                        nameAttr: 'data-lucide',
-                        attrs: { width: size, height: size, class: className, 'stroke-width': 2 },
-                        root: temp
-                    });
-                    const svg = temp.querySelector('svg');
-                    if (svg && iconRef.current) iconRef.current.innerHTML = svg.outerHTML;
-                }
-            }, [name, size, className]);
-            return <span ref={iconRef} className="inline-flex items-center justify-center" />;
+        const LucideIcon = ({ name, size = 18, className = "" }) => {
+            const icons = {
+                Plus: <path d="M12 5v14M5 12h14" />,
+                Trash2: <path d="M3 6h18M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2M10 11v6M14 11v6" />,
+                FileCode: <><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/><path d="M10 13l-2 2 2 2"/><path d="m14 17 2-2-2-2"/></>,
+                Layers: <><path d="m12.83 2.18a2 2 0 0 0-1.66 0L2.1 6.34a2 2 0 0 0 0 3.66l9.07 4.16a2 2 0 0 0 1.66 0l9.07-4.16a2 2 0 0 0 0-3.66z"/><path d="m2.1 14 9.07 4.16a2 2 0 0 0 1.66 0L21.9 14"/><path d="m2.1 18 9.07 4.16a2 2 0 0 0 1.66 0L21.9 18"/></>,
+                Zap: <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />,
+                Image: <><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></>,
+                Camera: <><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></>,
+                X: <path d="M18 6L6 18M6 6l12 12" />
+            };
+            return (
+                <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
+                    {icons[name] || <path d="" />}
+                </svg>
+            );
         };
 
+        const apiKey = "";
+        const SYSTEM_PROMPT = `你是一名资深游戏交互设计师。请识别图中的UI交互控件，并按JSON格式返回。结构要求：{"annotations": [{"label": "控件名称", "x": 百分比, "y": 百分比, "logic": "交互逻辑（分点）"}]}。logic字段必须包含\\n换行符。`;
+
         const App = () => {
-            const [step, setStep] = useState(1); 
-            const [apiKey, setApiKey] = useState(INITIAL_API_KEY);
-            const [lowFiImage, setLowFiImage] = useState(null);
-            const [isProcessing, setIsProcessing] = useState(false);
-            const [interactionDoc, setInteractionDoc] = useState({ annotations: [] });
-            const [finalHighFi, setFinalHighFi] = useState(null);
-            const [draggingIdx, setDraggingIdx] = useState(null);
-            const [isExporting, setIsExporting] = useState(false);
-            const [showSettings, setShowSettings] = useState(false);
+            const [pages, setPages] = useState([]);
+            const [activePageIndex, setActivePageIndex] = useState(null);
+            const [isAnalyzingAll, setIsAnalyzingAll] = useState(false);
+            const [draggedPoint, setDraggedPoint] = useState(null);
+            const [croppingMode, setCroppingMode] = useState(null);
+            const [cropStart, setCropStart] = useState(null);
+            const [cropCurrent, setCropCurrent] = useState(null);
+            const [isActuallyDragging, setIsActuallyDragging] = useState(false);
             
-            const stageRef = useRef(null);
-            const exportRef = useRef(null);
+            const canvasRef = useRef(null);
+            const imgRef = useRef(null);
 
-            // 指数退避重试机制
-            const fetchWithRetry = async (url, options, retries = 5) => {
-                for (let i = 0; i < retries; i++) {
-                    try {
-                        const response = await fetch(url, options);
-                        if (response.ok) return response;
-                        const error = await response.json();
-                        if (i === retries - 1) throw new Error(error.error?.message || "请求失败");
-                    } catch (err) {
-                        if (i === retries - 1) throw err;
-                        await new Promise(res => setTimeout(res, Math.pow(2, i) * 1000));
-                    }
-                }
-            };
-
-            const handleFileUpload = (e) => {
-                const file = e.target.files[0];
-                if (file) {
-                    const reader = new FileReader();
-                    reader.onload = (f) => setLowFiImage(f.target.result);
-                    reader.readAsDataURL(file);
-                }
-            };
-
-            const generateInteractionDoc = async () => {
-                if (!lowFiImage) return;
-                setIsProcessing(true);
+            const analyzeAll = async () => {
+                if (pages.length === 0 || isAnalyzingAll) return;
+                setIsAnalyzingAll(true);
+                const updatedPages = [...pages];
                 try {
-                    const base64Data = lowFiImage.split(',')[1];
-                    // 修正模型路径为预览环境支持的路径
-                    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`;
-                    
-                    const systemPrompt = "你是一名《逆水寒》手游交互专家。请识别原型图控件并以JSON格式输出坐标和交互逻辑。";
-                    const userQuery = "请分析此原型图，识别主要UI控件。";
-
-                    const payload = {
-                        contents: [{
-                            parts: [
-                                { text: userQuery },
-                                { inlineData: { mimeType: "image/png", data: base64Data } }
-                            ]
-                        }],
-                        systemInstruction: { parts: [{ text: systemPrompt }] },
-                        generationConfig: {
-                            responseMimeType: "application/json",
-                            responseSchema: {
-                                type: "OBJECT",
-                                properties: {
-                                    annotations: {
-                                        type: "ARRAY",
-                                        items: {
-                                            type: "OBJECT",
-                                            properties: {
-                                                label: { type: "STRING" },
-                                                x: { type: "NUMBER" },
-                                                y: { type: "NUMBER" },
-                                                logic: { type: "STRING" }
-                                            },
-                                            required: ["label", "x", "y", "logic"]
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    };
-
-                    const response = await fetchWithRetry(url, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify(payload)
-                    });
-
-                    const data = await response.json();
-                    const textContent = data.candidates?.[0]?.content?.parts?.[0]?.text;
-                    const parsedData = JSON.parse(textContent);
-                    setInteractionDoc(parsedData);
-                    setStep(2);
-                } catch (error) {
-                    alert("识别失败: " + error.message);
-                } finally {
-                    setIsProcessing(false);
-                }
-            };
-
-            const generateVisualUI = async () => {
-                setIsProcessing(true);
-                try {
-                    const descriptions = interactionDoc.annotations.map(a => a.label).join(', ');
-                    const prompt = `《逆水寒》手游风格高清UI重绘。包含以下元素：${descriptions}。唯美武侠风格，细腻纹理，大宋美学。`;
-                    
-                    const url = `https://generativelanguage.googleapis.com/v1beta/models/imagen-4.0-generate-001:predict?key=${apiKey}`;
-                    
-                    const response = await fetchWithRetry(url, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({
-                            instances: { prompt: prompt },
-                            parameters: { sampleCount: 1 }
-                        })
-                    });
-
-                    const data = await response.json();
-                    if (data.predictions?.[0]?.bytesBase64Encoded) {
-                        setFinalHighFi(`data:image/png;base64,${data.predictions[0].bytesBase64Encoded}`);
-                        setStep(3);
-                    } else {
-                        throw new Error("图像生成未返回有效数据");
+                    for (let i = 0; i < updatedPages.length; i++) {
+                        const page = updatedPages[i];
+                        if (!page.image) continue;
+                        const base64Data = page.image.split(',')[1];
+                        const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                                contents: [{ parts: [{ text: "分析此页面的交互控件布局。" }, { inlineData: { mimeType: "image/png", data: base64Data } }] }],
+                                systemInstruction: { parts: [{ text: SYSTEM_PROMPT }] },
+                                generationConfig: { responseMimeType: "application/json" }
+                            })
+                        });
+                        const data = await res.json();
+                        const rawText = data.candidates?.[0]?.content?.parts?.[0]?.text || '{"annotations":[]}';
+                        let parsed = { annotations: [] };
+                        try { parsed = JSON.parse(rawText); } catch (e) {}
+                        
+                        const newAnns = (parsed.annotations || []).map(a => ({
+                            id: Math.random().toString(36).substr(2, 9),
+                            label: a.label || "未命名控件",
+                            x: typeof a.x === 'number' ? a.x : 50,
+                            y: typeof a.y === 'number' ? a.y : 50,
+                            logic: a.logic || "1. 默认状态\n2. 点击反馈",
+                            screenshot: null
+                        }));
+                        updatedPages[i].annotations = [...(updatedPages[i].annotations || []), ...newAnns];
+                        setPages([...updatedPages]);
                     }
-                } catch (error) {
-                    alert("视觉生成失败: " + error.message);
-                } finally {
-                    setIsProcessing(false);
+                } catch (err) { console.error(err); } finally { setIsAnalyzingAll(false); }
+            };
+
+            const exportToSVG = async () => {
+                if (pages.length === 0) return;
+                for (const page of pages) {
+                    const img = new Image();
+                    img.src = page.image;
+                    await new Promise(resolve => {
+                        img.onload = () => {
+                            const w = img.width;
+                            const h = img.height;
+                            const padding = 60;
+                            const entrySpacing = 50;
+                            let detailContentHeight = 0;
+                            const processedAnns = (page.annotations || []).map((ann) => {
+                                const logicLines = (ann.logic || "").split('\n');
+                                const textHeight = logicLines.length * 32 + 60;
+                                const currentY = detailContentHeight;
+                                const itemHeight = ann.screenshot ? textHeight + 240 : textHeight + 20;
+                                detailContentHeight += itemHeight + entrySpacing;
+                                return { ...ann, logicLines, currentY, itemHeight };
+                            });
+                            const canvasH = h + detailContentHeight + 250;
+                            let svg = `<svg width="${w}" height="${canvasH}" viewBox="0 0 ${w} ${canvasH}" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+                                <rect width="${w}" height="${canvasH}" fill="#ffffff" />
+                                <image xlink:href="${page.image}" width="${w}" height="${h}" />
+                                ${(page.annotations || []).map((ann, idx) => `
+                                    <g transform="translate(${(ann.x/100)*w}, ${(ann.y/100)*h})">
+                                        <circle r="20" fill="#ef4444" stroke="#ffffff" stroke-width="4" />
+                                        <text y="7" font-family="Arial" font-size="20" font-weight="900" fill="#ffffff" text-anchor="middle">${idx + 1}</text>
+                                    </g>`).join('')}
+                                <g transform="translate(${padding}, ${h + 100})">
+                                    <text font-family="PingFang SC" font-size="48" font-weight="900" fill="#0f172a">交互页面：${page.name || '未命名'}</text>
+                                    ${processedAnns.map((ann, idx) => `
+                                        <g transform="translate(0, ${100 + ann.currentY})">
+                                            <circle cx="25" cy="25" r="25" fill="#1e293b" />
+                                            <text x="25" y="34" font-family="Arial" font-size="24" font-weight="900" fill="#ffffff" text-anchor="middle">${idx + 1}</text>
+                                            <text x="70" y="36" font-family="PingFang SC" font-size="32" font-weight="bold" fill="#0f172a">${ann.label}</text>
+                                            <g transform="translate(70, 85)">
+                                                ${ann.logicLines.map((line, lIdx) => `<text y="${lIdx * 34}" font-family="PingFang SC" font-size="22" fill="#475569">${line}</text>`).join('')}
+                                            </g>
+                                            ${ann.screenshot ? `<image xlink:href="${ann.screenshot}" x="70" y="${85 + ann.logicLines.length * 34 + 20}" width="400" height="225" preserveAspectRatio="xMidYMid slice" />` : ''}
+                                        </g>`).join('')}
+                                </g>
+                            </svg>`;
+                            const blob = new Blob([svg], { type: 'image/svg+xml' });
+                            const url = URL.createObjectURL(blob);
+                            const a = document.createElement('a');
+                            a.href = url; a.download = `交互文档_${page.name}.svg`;
+                            a.click(); resolve();
+                        };
+                    });
                 }
             };
 
-            const exportGuide = async () => {
-                setIsExporting(true);
-                setTimeout(async () => {
-                    const canvas = await html2canvas(exportRef.current, { scale: 2 });
-                    const link = document.createElement('a');
-                    link.download = "逆水寒交互标注稿.png";
-                    link.href = canvas.toDataURL();
-                    link.click();
-                    setIsExporting(false);
-                }, 100);
+            const handleCanvasClick = (e) => {
+                // 如果刚刚发生了拖拽行为，不触发新增
+                if (isActuallyDragging || croppingMode || activePageIndex === null) {
+                    setIsActuallyDragging(false);
+                    return;
+                }
+                const rect = canvasRef.current.getBoundingClientRect();
+                const x = ((e.clientX - rect.left) / rect.width) * 100;
+                const y = ((e.clientY - rect.top) / rect.height) * 100;
+                const updated = [...pages];
+                updated[activePageIndex].annotations.push({
+                    id: Math.random().toString(36).substr(2, 9),
+                    label: "新交互控件",
+                    x, y, logic: "1. 交互状态：\n2. 触发逻辑：\n3. 视觉反馈：", screenshot: null
+                });
+                setPages(updated);
+            };
+
+            const handleMouseMove = (e) => {
+                if (draggedPoint) {
+                    setIsActuallyDragging(true); // 标记正在发生拖拽
+                    const rect = canvasRef.current.getBoundingClientRect();
+                    const x = Math.max(0, Math.min(100, ((e.clientX - rect.left) / rect.width) * 100));
+                    const y = Math.max(0, Math.min(100, ((e.clientY - rect.top) / rect.height) * 100));
+                    const updated = [...pages];
+                    updated[draggedPoint.pIdx].annotations[draggedPoint.aIdx].x = x;
+                    updated[draggedPoint.pIdx].annotations[draggedPoint.aIdx].y = y;
+                    setPages(updated);
+                }
+                if (croppingMode && cropStart) {
+                    const rect = canvasRef.current.getBoundingClientRect();
+                    setCropCurrent({ x: e.clientX - rect.left, y: e.clientY - rect.top });
+                }
+            };
+
+            const finalizeCrop = () => {
+                if (!cropStart || !cropCurrent || !croppingMode) return;
+                const canvas = document.createElement('canvas');
+                const ctx = canvas.getContext('2d');
+                const img = imgRef.current;
+                const scaleX = img.naturalWidth / img.clientWidth;
+                const scaleY = img.naturalHeight / img.clientHeight;
+                
+                const x = Math.min(cropStart.x, cropCurrent.x) * scaleX;
+                const y = Math.min(cropStart.y, cropCurrent.y) * scaleY;
+                const w = Math.abs(cropStart.x - cropCurrent.x) * scaleX;
+                const h = Math.abs(cropStart.y - cropCurrent.y) * scaleY;
+                
+                canvas.width = w; canvas.height = h;
+                ctx.drawImage(img, x, y, w, h, 0, 0, w, h);
+                
+                const updated = [...pages];
+                updated[croppingMode.pIdx].annotations[croppingMode.aIdx].screenshot = canvas.toDataURL('image/png');
+                setPages(updated);
+                setCroppingMode(null); setCropStart(null); setCropCurrent(null);
             };
 
             return (
-                <div className="min-h-screen p-4 md:p-8">
-                    {/* Header */}
-                    <div className="max-w-7xl mx-auto flex items-center justify-between mb-8 bg-white p-6 rounded-3xl shadow-sm border border-slate-100">
-                        <div className="flex items-center gap-4">
-                            <div className="p-3 bg-indigo-600 rounded-xl text-white">
-                                <Icon name="Zap" size={24} />
+                <div className="h-screen flex flex-col overflow-hidden">
+                    <header className="h-14 bg-slate-900 flex items-center justify-between px-6 shrink-0 z-50 border-b border-white/10 shadow-2xl">
+                        <div className="flex items-center gap-3">
+                            <div className="w-8 h-8 bg-red-600 rounded-lg flex items-center justify-center shadow-lg shadow-red-900/40">
+                                <LucideIcon name="Layers" size={18} className="text-white" />
                             </div>
-                            <div>
-                                <h1 className="text-xl font-black italic">逆水寒 · 交互全链路</h1>
-                                <p className="text-[10px] text-slate-400 font-bold tracking-widest uppercase">AI-Driven Design System</p>
-                            </div>
+                            <h1 className="text-white font-black text-sm tracking-tight leading-none uppercase">Project Sword</h1>
                         </div>
-                        <div className="flex gap-2">
-                            {[1, 2, 3].map(i => (
-                                <div key={i} className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold border ${step >= i ? 'bg-indigo-600 border-indigo-600 text-white' : 'border-slate-200 text-slate-300'}`}>{i}</div>
-                            ))}
-                        </div>
-                    </div>
-
-                    {/* Step 1: Upload */}
-                    {step === 1 && (
-                        <div className="max-w-xl mx-auto bg-white p-12 rounded-[40px] shadow-xl border border-slate-100 text-center animate-fade-in">
-                            <div className="mb-8 cursor-pointer" onClick={() => document.getElementById('upload').click()}>
-                                {lowFiImage ? (
-                                    <img src={lowFiImage} className="max-h-80 mx-auto rounded-2xl" />
-                                ) : (
-                                    <div className="w-full h-64 border-4 border-dashed border-slate-50 rounded-3xl flex flex-col items-center justify-center bg-slate-50 hover:bg-indigo-50 transition-colors">
-                                        <Icon name="UploadCloud" size={48} className="text-slate-200 mb-4" />
-                                        <p className="text-slate-400 font-bold">上传原型截图</p>
-                                    </div>
-                                )}
-                            </div>
-                            <input id="upload" type="file" hidden accept="image/*" onChange={handleFileUpload} />
-                            <button 
-                                disabled={!lowFiImage || isProcessing}
-                                onClick={generateInteractionDoc}
-                                className="w-full py-4 bg-slate-900 text-white rounded-2xl font-black text-lg hover:bg-indigo-600 disabled:opacity-30 transition-all shadow-lg"
-                            >
-                                {isProcessing ? "AI 深度分析中..." : "开启智能交互识别"}
+                        <div className="flex items-center gap-2">
+                            <button onClick={() => document.getElementById('uploader').click()} className="flex items-center gap-2 px-4 py-1.5 bg-slate-800 hover:bg-slate-700 rounded-lg text-[11px] font-bold text-white transition-all">
+                                <LucideIcon name="Plus" size={12} /> 导入原型
                             </button>
+                            <button onClick={analyzeAll} disabled={isAnalyzingAll || pages.length === 0} className={`flex items-center gap-2 px-4 py-1.5 rounded-lg text-[11px] font-bold text-white transition-all ${isAnalyzingAll ? 'bg-orange-500 animate-pulse' : 'bg-orange-600 hover:bg-orange-500'}`}>
+                                <LucideIcon name="Zap" size={12} /> {isAnalyzingAll ? '正在扫描...' : '全量解析'}
+                            </button>
+                            <button onClick={exportToSVG} disabled={pages.length === 0} className="flex items-center gap-2 px-4 py-1.5 bg-emerald-600 hover:bg-emerald-500 rounded-lg text-[11px] font-bold text-white transition-all">
+                                <LucideIcon name="FileCode" size={12} /> 导出 SVG
+                            </button>
+                            <input id="uploader" type="file" multiple hidden onChange={(e) => {
+                                Array.from(e.target.files).forEach(file => {
+                                    const reader = new FileReader();
+                                    reader.onload = (ev) => setPages(prev => [...prev, { id: Math.random().toString(36), name: file.name.split('.')[0], image: ev.target.result, annotations: [] }]);
+                                    reader.readAsDataURL(file);
+                                });
+                            }} />
                         </div>
-                    )}
+                    </header>
 
-                    {/* Step 2: Editor */}
-                    {step === 2 && (
-                        <div className="max-w-7xl mx-auto animate-fade-in space-y-6">
-                            <div className="flex justify-between items-center bg-white p-6 rounded-3xl border border-slate-100">
-                                <div>
-                                    <h2 className="font-black">标注编辑器</h2>
-                                    <p className="text-slate-400 text-[10px] font-bold tracking-widest uppercase">拖拽数字调整位置</p>
+                    <div className="flex-1 flex overflow-hidden">
+                        <aside className="w-16 bg-slate-900 flex flex-col items-center py-4 gap-4 shadow-inner border-r border-white/5">
+                            {pages.map((p, i) => (
+                                <div key={p.id} onClick={() => setActivePageIndex(i)} className={`w-10 h-10 rounded-lg overflow-hidden cursor-pointer border-2 transition-all relative ${activePageIndex === i ? 'border-red-500 scale-110' : 'border-transparent opacity-40 hover:opacity-100'}`}>
+                                    <img src={p.image} className="w-full h-full object-cover" />
                                 </div>
-                                <div className="flex gap-3">
-                                    <button onClick={exportGuide} className="px-6 py-3 border-2 border-slate-900 rounded-xl font-bold text-sm">导出长图</button>
-                                    <button onClick={generateVisualUI} className="px-6 py-3 bg-indigo-600 text-white rounded-xl font-bold text-sm shadow-lg">视觉渲染</button>
-                                </div>
-                            </div>
+                            ))}
+                        </aside>
 
-                            <div ref={exportRef} className={`grid ${isExporting ? 'grid-cols-1 w-[1200px] p-8' : 'lg:grid-cols-12'} gap-8`}>
-                                <div className={`${isExporting ? 'w-full' : 'lg:col-span-8'} bg-white p-4 rounded-[32px] shadow-sm relative`}>
-                                    <div ref={stageRef} className="relative w-full rounded-2xl overflow-hidden ring-1 ring-slate-100">
-                                        <img src={lowFiImage} className="w-full block select-none pointer-events-none" />
-                                        {interactionDoc.annotations.map((ann, idx) => (
+                        <main className="flex-1 relative bg-slate-100 overflow-auto flex items-center justify-center p-8" onMouseMove={handleMouseMove} onMouseUp={() => { if (croppingMode && cropStart) finalizeCrop(); setDraggedPoint(null); }}>
+                            {activePageIndex !== null ? (
+                                <div className="relative shadow-[0_40px_80px_-15px_rgba(0,0,0,0.3)] rounded-xl bg-white p-2">
+                                    <div ref={canvasRef} onClick={handleCanvasClick} className="relative inline-block overflow-hidden rounded-lg bg-slate-50 select-none" style={{ lineHeight: 0 }}>
+                                        <img ref={imgRef} src={pages[activePageIndex].image} className="max-w-full max-h-[80vh] block pointer-events-none" />
+                                        {(pages[activePageIndex].annotations || []).map((ann, idx) => (
                                             <div 
-                                                key={idx}
-                                                draggable
-                                                onDragStart={() => setDraggingIdx(idx)}
-                                                onDragEnd={(e) => {
-                                                    const rect = stageRef.current.getBoundingClientRect();
-                                                    const x = ((e.clientX - rect.left) / rect.width) * 100;
-                                                    const y = ((e.clientY - rect.top) / rect.height) * 100;
-                                                    const newAnns = [...interactionDoc.annotations];
-                                                    newAnns[idx].x = Math.max(0, Math.min(100, x));
-                                                    newAnns[idx].y = Math.max(0, Math.min(100, y));
-                                                    setInteractionDoc({ ...interactionDoc, annotations: newAnns });
-                                                }}
-                                                className="absolute w-8 h-8 bg-red-600 text-white rounded-full flex items-center justify-center font-black text-xs border-2 border-white shadow-xl cursor-move transform -translate-x-1/2 -translate-y-1/2"
+                                                key={ann.id} 
+                                                onMouseDown={(e) => { 
+                                                    e.stopPropagation(); // 阻止冒泡，防止触发画布点击事件
+                                                    setDraggedPoint({ pIdx: activePageIndex, aIdx: idx }); 
+                                                    setIsActuallyDragging(false); // 重置拖拽状态标记
+                                                }} 
+                                                className="annotation-point" 
                                                 style={{ left: `${ann.x}%`, top: `${ann.y}%` }}
                                             >
                                                 {idx + 1}
                                             </div>
                                         ))}
-                                    </div>
-                                </div>
 
-                                <div className={`${isExporting ? 'w-full grid grid-cols-2 gap-4' : 'lg:col-span-4 space-y-4 max-h-[80vh] overflow-y-auto custom-scrollbar'}`}>
-                                    {interactionDoc.annotations.map((ann, idx) => (
-                                        <div key={idx} className="bg-white p-5 rounded-2xl border border-slate-100 shadow-sm">
-                                            <div className="flex gap-4">
-                                                <div className="w-8 h-8 bg-slate-900 text-white rounded-lg flex items-center justify-center shrink-0 font-bold">{idx + 1}</div>
-                                                <div className="flex-1">
-                                                    <input 
-                                                        className="w-full font-black text-sm mb-2 outline-none border-b border-transparent focus:border-indigo-200"
-                                                        value={ann.label}
-                                                        onChange={(e) => {
-                                                            const n = [...interactionDoc.annotations];
-                                                            n[idx].label = e.target.value;
-                                                            setInteractionDoc({ ...interactionDoc, annotations: n });
-                                                        }}
-                                                    />
-                                                    <textarea 
-                                                        className="w-full text-xs text-slate-500 outline-none resize-none bg-slate-50 p-2 rounded-lg"
-                                                        rows="3"
-                                                        value={ann.logic}
-                                                        onChange={(e) => {
-                                                            const n = [...interactionDoc.annotations];
-                                                            n[idx].logic = e.target.value;
-                                                            setInteractionDoc({ ...interactionDoc, annotations: n });
-                                                        }}
-                                                    />
+                                        {croppingMode && (
+                                            <div className="crop-overlay" onMouseDown={(e) => { const r = canvasRef.current.getBoundingClientRect(); setCropStart({ x: e.clientX-r.left, y: e.clientY-r.top }); }}>
+                                                {cropStart && cropCurrent && (
+                                                    <div className="absolute border-2 border-red-500 bg-red-500/10 shadow-[0_0_0_9999px_rgba(0,0,0,0.5)]" style={{ left: Math.min(cropStart.x, cropCurrent.x), top: Math.min(cropStart.y, cropCurrent.y), width: Math.abs(cropStart.x - cropCurrent.x), height: Math.abs(cropStart.y - cropCurrent.y) }} />
+                                                )}
+                                                <div className="absolute top-4 left-1/2 -translate-x-1/2 bg-white px-4 py-2 rounded-full shadow-xl flex items-center gap-2">
+                                                    <div className="w-2 h-2 bg-red-500 rounded-full animate-pulse" />
+                                                    <span className="text-[11px] font-bold text-slate-800 uppercase tracking-widest">正在裁剪局部图...</span>
                                                 </div>
                                             </div>
+                                        )}
+                                    </div>
+                                </div>
+                            ) : (
+                                <div className="text-slate-300 flex flex-col items-center">
+                                    <LucideIcon name="Image" size={48} className="opacity-20 mb-3" />
+                                    <p className="font-black text-[10px] tracking-[0.3em] opacity-40">SELECT A PAGE</p>
+                                </div>
+                            )}
+                        </main>
+
+                        <aside className="w-[400px] bg-white border-l border-slate-200 overflow-y-auto custom-scrollbar">
+                            {activePageIndex !== null ? (
+                                <div className="p-6">
+                                    <header className="flex items-center justify-between mb-6">
+                                        <div className="flex flex-col">
+                                            <h2 className="font-black text-slate-800 text-xs tracking-wider uppercase">Interactive Specs</h2>
+                                            <span className="text-[10px] font-bold text-slate-400">PAGE: {pages[activePageIndex].name}</span>
                                         </div>
-                                    ))}
-                                </div>
-                            </div>
-                        </div>
-                    )}
+                                        <div className="bg-slate-100 px-2 py-1 rounded text-[10px] font-bold text-slate-500">{(pages[activePageIndex].annotations?.length || 0)} NODES</div>
+                                    </header>
 
-                    {/* Step 3: Result */}
-                    {step === 3 && (
-                        <div className="max-w-4xl mx-auto animate-fade-in text-center space-y-8">
-                            <h2 className="text-2xl font-black italic">视觉风格重绘完成</h2>
-                            <div className="bg-white p-4 rounded-[40px] shadow-2xl border border-slate-100">
-                                <img src={finalHighFi} className="rounded-3xl w-full shadow-inner" alt="Result" />
-                                <div className="py-8 flex justify-center gap-4">
-                                    <button onClick={() => setStep(2)} className="px-8 py-3 bg-slate-100 rounded-xl font-bold">返回编辑</button>
-                                    <button 
-                                        onClick={() => {
-                                            const a = document.createElement('a');
-                                            a.href = finalHighFi;
-                                            a.download = "逆水寒视觉稿.png";
-                                            a.click();
-                                        }}
-                                        className="px-8 py-3 bg-indigo-600 text-white rounded-xl font-bold flex items-center gap-2 shadow-lg"
-                                    >
-                                        <Icon name="Download" size={18} /> 下载图片
-                                    </button>
-                                </div>
-                            </div>
-                        </div>
-                    )}
+                                    <div className="space-y-8">
+                                        {(pages[activePageIndex].annotations || []).map((ann, idx) => (
+                                            <div key={ann.id} className="group relative pl-8 border-l-2 border-slate-100 pb-4 transition-all hover:border-red-500">
+                                                <div className="absolute -left-[13px] top-0 w-6 h-6 bg-slate-800 text-white rounded flex items-center justify-center text-[11px] font-black group-hover:bg-red-600 transition-colors">
+                                                    {idx + 1}
+                                                </div>
+                                                
+                                                <div className="space-y-3">
+                                                    <div className="flex items-center justify-between">
+                                                        <input className="font-bold text-sm text-slate-800 outline-none w-full bg-transparent border-b border-transparent focus:border-red-200" value={ann.label} onChange={(e) => {
+                                                            const u = [...pages]; u[activePageIndex].annotations[idx].label = e.target.value; setPages(u);
+                                                        }} />
+                                                        <div className="flex items-center gap-1">
+                                                            <button 
+                                                                onClick={() => setCroppingMode({ pIdx: activePageIndex, aIdx: idx })}
+                                                                className={`p-1.5 rounded transition-all ${ann.screenshot ? 'text-emerald-500 bg-emerald-50' : 'text-slate-400 hover:text-slate-600 bg-slate-50'}`}
+                                                                title="添加截图"
+                                                            >
+                                                                <LucideIcon name="Camera" size={14} />
+                                                            </button>
+                                                            <button onClick={() => { const u = [...pages]; u[activePageIndex].annotations.splice(idx, 1); setPages(u); }} className="p-1.5 text-slate-300 hover:text-red-500 transition-colors"><LucideIcon name="Trash2" size={14} /></button>
+                                                        </div>
+                                                    </div>
 
-                    {/* Loading Overlay */}
-                    {isProcessing && (
-                        <div className="fixed inset-0 bg-white/80 backdrop-blur-md z-[500] flex flex-col items-center justify-center">
-                            <div className="w-16 h-16 border-4 border-indigo-100 border-t-indigo-600 rounded-full animate-spin mb-6" />
-                            <p className="font-black text-slate-800 tracking-[0.2em] uppercase text-sm animate-pulse">正在链接大宋枢密院 AI...</p>
-                        </div>
-                    )}
+                                                    {ann.screenshot && (
+                                                        <div className="relative group/img overflow-hidden rounded-lg shadow-sm border border-slate-100">
+                                                            <img src={ann.screenshot} className="w-full h-auto block" />
+                                                            <button 
+                                                                onClick={() => { const u = [...pages]; u[activePageIndex].annotations[idx].screenshot = null; setPages(u); }}
+                                                                className="absolute top-2 right-2 bg-black/60 text-white p-1 rounded-full opacity-0 group-hover/img:opacity-100 transition-all scale-75"
+                                                            >
+                                                                <LucideIcon name="X" size={12} />
+                                                            </button>
+                                                        </div>
+                                                    )}
+
+                                                    <div className="relative">
+                                                        <textarea 
+                                                            className="w-full h-24 p-3 bg-slate-50 rounded-lg text-xs font-medium text-slate-600 leading-relaxed outline-none focus:bg-white focus:ring-1 focus:ring-red-500/20 border border-transparent focus:border-red-500 transition-all resize-none" 
+                                                            placeholder="输入交互逻辑描述..."
+                                                            value={ann.logic} 
+                                                            onChange={(e) => {
+                                                                const u = [...pages]; u[activePageIndex].annotations[idx].logic = e.target.value; setPages(u);
+                                                            }} 
+                                                        />
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+                            ) : (
+                                <div className="h-full flex items-center justify-center">
+                                    <span className="text-[10px] font-black text-slate-300 tracking-[0.2em] uppercase">No Data</span>
+                                </div>
+                            )}
+                        </aside>
+                    </div>
                 </div>
             );
         };
